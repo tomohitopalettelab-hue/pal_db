@@ -1,0 +1,312 @@
+import cors from 'cors';
+import dotenv from 'dotenv';
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { deleteAccountStatusOption, deleteAccount, deleteContract, deleteContractOption, deletePlan, deleteServiceSubscription, ensureTables, getPaletteServices, getPaletteSummary, hasChatLoginId, listAccountStatusOptions, listAccounts, listContracts, listContractOptions, listPlans, listServiceSubscriptions, upsertAccountStatusOption, upsertAccount, upsertContract, upsertContractOption, upsertPlan, upsertServiceSubscription, verifyChatLogin, } from './store.js';
+dotenv.config();
+if (!process.env.POSTGRES_URL) {
+    process.env.POSTGRES_URL =
+        process.env.DATABASE_URL ||
+            process.env.POSTGRES_PRISMA_URL ||
+            process.env.POSTGRES_URL_NON_POOLING ||
+            '';
+}
+const app = express();
+const port = Number(process.env.PORT || 3100);
+const corsOrigin = process.env.CORS_ORIGIN || '*';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.resolve(__dirname, '../public');
+app.use(cors({ origin: corsOrigin === '*' ? true : corsOrigin }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.static(publicDir));
+app.get('/admin', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'customers.html'));
+});
+app.get('/admin/customers', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'customers.html'));
+});
+app.get('/admin/customers/:id', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'admin.html'));
+});
+app.get('/health', async (_req, res) => {
+    try {
+        await ensureTables();
+        return res.json({ success: true, service: 'pal-db' });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'health check failed' });
+    }
+});
+app.get('/api/accounts', async (_req, res) => {
+    try {
+        const accounts = await listAccounts();
+        return res.json({ success: true, accounts });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to list accounts' });
+    }
+});
+app.post('/api/accounts', async (req, res) => {
+    try {
+        const account = await upsertAccount(req.body || {});
+        return res.json({ success: true, account });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to save account';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.get('/api/account-status-options', async (req, res) => {
+    try {
+        const includeInactive = String(req.query.includeInactive || '') === '1';
+        const options = await listAccountStatusOptions(includeInactive);
+        return res.json({ success: true, options });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to list account status options' });
+    }
+});
+app.post('/api/account-status-options', async (req, res) => {
+    try {
+        const option = await upsertAccountStatusOption(req.body || {});
+        return res.json({ success: true, option });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to save account status option';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.get('/api/plans', async (req, res) => {
+    try {
+        const includeInactive = String(req.query.includeInactive || '') === '1';
+        const plans = await listPlans(includeInactive);
+        return res.json({ success: true, plans });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to list plans' });
+    }
+});
+app.post('/api/plans', async (req, res) => {
+    try {
+        const plan = await upsertPlan(req.body || {});
+        return res.json({ success: true, plan });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to save plan';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.get('/api/contracts', async (req, res) => {
+    try {
+        const accountId = String(req.query.accountId || '').trim() || undefined;
+        const paletteId = String(req.query.paletteId || '').trim() || undefined;
+        const activeOn = String(req.query.activeOn || '').trim() || undefined;
+        const contracts = await listContracts({ accountId, paletteId, activeOn });
+        return res.json({ success: true, contracts });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to list contracts' });
+    }
+});
+app.post('/api/contracts', async (req, res) => {
+    try {
+        const contract = await upsertContract(req.body || {});
+        return res.json({ success: true, contract });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to save contract';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.get('/api/contract-options', async (req, res) => {
+    try {
+        const optionType = String(req.query.optionType || '').trim();
+        if (optionType !== 'phase' && optionType !== 'status') {
+            return res.status(400).json({ success: false, error: 'optionType must be phase or status' });
+        }
+        const includeInactive = String(req.query.includeInactive || '') === '1';
+        const options = await listContractOptions(optionType, includeInactive);
+        return res.json({ success: true, options });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to list contract options' });
+    }
+});
+app.post('/api/contract-options', async (req, res) => {
+    try {
+        const option = await upsertContractOption(req.body || {});
+        return res.json({ success: true, option });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to save contract option';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.delete('/api/accounts/:id', async (req, res) => {
+    try {
+        await deleteAccount(String(req.params.id));
+        return res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to delete account' });
+    }
+});
+app.delete('/api/plans/:id', async (req, res) => {
+    try {
+        await deletePlan(String(req.params.id));
+        return res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to delete plan' });
+    }
+});
+app.delete('/api/contracts/:id', async (req, res) => {
+    try {
+        await deleteContract(String(req.params.id));
+        return res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to delete contract' });
+    }
+});
+app.delete('/api/account-status-options/:id', async (req, res) => {
+    try {
+        await deleteAccountStatusOption(String(req.params.id));
+        return res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to delete account status option' });
+    }
+});
+app.delete('/api/contract-options/:id', async (req, res) => {
+    try {
+        await deleteContractOption(String(req.params.id));
+        return res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to delete contract option' });
+    }
+});
+app.get('/api/service-subscriptions', async (req, res) => {
+    try {
+        const accountId = String(req.query.accountId || '').trim() || undefined;
+        const paletteId = String(req.query.paletteId || '').trim() || undefined;
+        const activeOn = String(req.query.activeOn || '').trim() || undefined;
+        const services = await listServiceSubscriptions({ accountId, paletteId, activeOn });
+        return res.json({ success: true, services });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to list services' });
+    }
+});
+app.post('/api/service-subscriptions', async (req, res) => {
+    try {
+        const service = await upsertServiceSubscription(req.body || {});
+        return res.json({ success: true, service });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to save service';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.delete('/api/service-subscriptions/:id', async (req, res) => {
+    try {
+        await deleteServiceSubscription(String(req.params.id));
+        return res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to delete service' });
+    }
+});
+app.get('/api/palette-summary', async (req, res) => {
+    try {
+        const paletteId = String(req.query.paletteId || '').trim();
+        const activeOn = String(req.query.activeOn || '').trim() || undefined;
+        if (!paletteId)
+            return res.status(400).json({ success: false, error: 'paletteId is required' });
+        const summary = await getPaletteSummary(paletteId, activeOn);
+        if (!summary)
+            return res.status(404).json({ success: false, error: 'paletteId not found' });
+        return res.json({ success: true, ...summary });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to fetch summary' });
+    }
+});
+app.get('/api/palette-services', async (req, res) => {
+    try {
+        const paletteId = String(req.query.paletteId || '').trim();
+        const activeOn = String(req.query.activeOn || '').trim() || undefined;
+        if (!paletteId)
+            return res.status(400).json({ success: false, error: 'paletteId is required' });
+        const result = await getPaletteServices(paletteId, activeOn);
+        if (!result)
+            return res.status(404).json({ success: false, error: 'paletteId not found' });
+        return res.json({ success: true, ...result });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to fetch services' });
+    }
+});
+app.get('/api/chat-auth/check-id', async (req, res) => {
+    try {
+        const loginId = String(req.query.loginId || '').trim();
+        if (!loginId) {
+            return res.status(400).json({ success: false, error: 'loginId is required' });
+        }
+        const exists = await hasChatLoginId(loginId);
+        return res.json({ success: true, exists });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to check login id' });
+    }
+});
+app.post('/api/chat-auth/verify', async (req, res) => {
+    try {
+        const loginId = String(req.body?.loginId || '').trim();
+        const password = String(req.body?.password || '');
+        if (!loginId || !password) {
+            return res.status(400).json({ success: false, error: 'loginId and password are required' });
+        }
+        const verified = await verifyChatLogin(loginId, password);
+        if (!verified.success) {
+            return res.status(401).json({ success: false, error: 'invalid credentials' });
+        }
+        return res.json(verified);
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to verify credentials' });
+    }
+});
+app.listen(port, async () => {
+    try {
+        await ensureTables();
+        console.log(`[pal-db] running on http://localhost:${port}`);
+    }
+    catch (error) {
+        console.error('[pal-db] init error', error);
+        if (!process.env.POSTGRES_URL) {
+            console.error('[pal-db] POSTGRES_URL が未設定です。.env に設定してください。');
+            console.error('[pal-db] 例: POSTGRES_URL=postgres://USER:PASSWORD@HOST:5432/DB');
+        }
+    }
+});

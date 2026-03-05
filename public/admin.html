@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pal-db 顧客詳細</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #f1f5f9;
+      --card-bg: #ffffff;
+      --text-main: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --danger: #ef4444;
+      --accent-blue: #dbeafe;
+      --accent-green: #dcfce7;
+      --success: #10b981;
+    }
+
+    body { font-family: 'Helvetica Neue', Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; margin: 0; background: var(--bg); color: var(--text-main); line-height: 1.6; }
+    
+    header { background: #0f172a; color: #fff; padding: 1rem 2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
+    .header-main { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 0.8rem; }
+    header span { font-size: 1.25rem; font-weight: 700; }
+    header a { color: #fff; text-decoration: none; font-size: 0.85rem; padding: 0.5rem 0.8rem; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; transition: 0.2s; }
+    header a:hover { background: rgba(255,255,255,0.1); }
+
+    .service-nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .service-nav a { font-size: 0.8rem; padding: 0.4rem 0.7rem; border-radius: 999px; border: 1px solid rgba(255,255,255,0.35); background: rgba(255,255,255,0.06); }
+
+    main { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 2rem; }
+    
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); overflow: hidden; }
+    
+    .section-customer { border-top: 5px solid var(--primary); }
+    .section-service { border-top: 5px solid var(--success); }
+
+    .card-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); background: #f8fafc; display: flex; justify-content: space-between; align-items: center; }
+    .card-header h2 { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--text-main); }
+
+    .form-body { padding: 1.5rem; }
+    
+    .grid-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.2rem; }
+    .full-width { grid-column: 1 / -1; }
+    
+    .form-group { display: flex; flex-direction: column; gap: 0.4rem; }
+    .form-group label { font-size: 0.85rem; font-weight: 700; color: #475569; display: flex; align-items: center; gap: 4px; }
+    .form-group label::before { content: ""; display: inline-block; width: 3px; height: 12px; background: var(--primary); border-radius: 2px; }
+    .section-service .form-group label::before { background: var(--success); }
+
+    input, select { padding: 0.7rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95rem; background-color: #fff; color: var(--text-main); transition: all 0.2s; }
+    input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+    input[readonly] { background-color: #f1f5f9; cursor: not-allowed; }
+
+    .actions { margin-top: 2rem; padding: 1.5rem; background: #f8fafc; border-top: 1px solid var(--border); display: flex; gap: 1rem; align-items: center; }
+    
+    button { padding: 0.75rem 1.5rem; border-radius: 8px; font-size: 0.95rem; font-weight: 700; cursor: pointer; transition: 0.2s; border: none; }
+    .btn-save { background: var(--primary); color: white; }
+    .btn-add { background: var(--success); color: white; }
+    .btn-save:hover, .btn-add:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-delete { background: #fff; color: var(--danger); border: 1px solid #fee2e2; }
+    .btn-delete:hover { background: var(--danger); color: white; }
+    .btn-refresh { background: #64748b; color: white; }
+
+    .table-container { overflow-x: auto; padding: 1rem; background: #fff; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.9rem; }
+    th { background: #f8fafc; padding: 1rem; text-align: left; font-weight: 700; color: var(--text-muted); border-bottom: 2px solid var(--border); }
+    td { padding: 1rem; border-bottom: 1px solid var(--border); }
+    
+    code { background: var(--accent-blue); color: var(--primary); padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-main">
+      <span>pal-db 顧客詳細</span>
+      <a href="/admin">← 顧客一覧に戻る</a>
+    </div>
+    <nav class="service-nav" id="service-nav"></nav>
+  </header>
+
+  <main>
+    <section class="card section-customer">
+      <div class="card-header">
+        <h2>【顧客情報】</h2>
+        <div id="accMeta" class="muted"></div>
+      </div>
+      <div class="form-body">
+        <div class="grid-form">
+          <div class="form-group"><label>顧客ID</label><input id="accPalette" readonly /></div>
+          <div class="form-group"><label>顧客名</label><input id="accName" /></div>
+          <div class="form-group"><label>屋号名</label><input id="accShopName" /></div>
+          <div class="form-group"><label>個人名</label><input id="accPersonName" /></div>
+          <div class="form-group"><label>個人名フリガナ</label><input id="accPersonKana" /></div>
+          <div class="form-group"><label>郵便番号</label><input id="accZip" /></div>
+          <div class="form-group full-width"><label>住所</label><input id="accAddress" /></div>
+          <div class="form-group"><label>電話番号（固定）</label><input id="accPhone" type="tel" /></div>
+          <div class="form-group"><label>電話番号（携帯）</label><input id="accMobile" type="tel" /></div>
+          <div class="form-group"><label>メールアドレス</label><input id="accEmail" type="email" /></div>
+          <div class="form-group"><label>ログインID</label><input id="accChatLoginId" placeholder="例: A1234" /></div>
+          <div class="form-group"><label>ログインPW</label><input id="accChatPassword" type="text" /></div>
+          <div class="form-group">
+            <label>顧客ステータス</label>
+            <select id="accStatus">
+              <option value="active">稼働中</option>
+              <option value="inactive">停止中</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn-save" onclick="saveAccount()">顧客情報を更新</button>
+        <button class="btn-refresh" onclick="refreshAll()">再読込</button>
+        <div style="flex-grow: 1;"></div>
+        <button class="btn-delete" onclick="deleteAccount()">顧客削除</button>
+      </div>
+    </section>
+
+    <section class="card section-service">
+      <div class="card-header">
+        <h2>【プラン】の新規追加</h2>
+      </div>
+      <div class="form-body" style="border-bottom: 1px solid var(--border);">
+        <div class="grid-form">
+          <input id="planEditId" type="hidden" />
+          <div class="form-group"><label>プランコード</label><input id="planCode" placeholder="basic" /></div>
+          <div class="form-group"><label>プラン名</label><input id="planName" placeholder="ベーシック" /></div>
+          <div class="form-group full-width"><label>説明（任意）</label><input id="planDesc" placeholder="プラン説明" /></div>
+          <div class="form-group"><label>標準価格（円）</label><input id="planPrice" type="number" value="0" /></div>
+          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+            <button class="btn-add" id="plan-save-btn" onclick="savePlan()">このプランを追加する</button>
+            <button class="btn-refresh" id="plan-cancel-btn" style="display:none;" onclick="cancelPlanEdit()">編集をキャンセル</button>
+          </div>
+          <div class="full-width"><strong>登録済み契約プラン:</strong> <span id="planMasterList">-</span></div>
+        </div>
+      </div>
+
+      <div class="card-header">
+        <h2>【サービス詳細】の新規追加</h2>
+      </div>
+      <div class="form-body">
+        <div class="grid-form">
+          <input id="ctrId" type="hidden" />
+          <div class="form-group">
+            <label>契約プラン</label>
+            <select id="ctrPlan"></select>
+          </div>
+          <div class="form-group">
+            <label>フェーズ</label>
+            <select id="ctrPhase">
+            </select>
+          </div>
+          <div class="form-group"><label>初期費用（税抜）</label><input id="ctrPriceInitial" type="number" value="0" /></div>
+          <div class="form-group"><label>月額費用（税抜）</label><input id="ctrPrice" type="number" value="0" /></div>
+          <div class="form-group"><label>契約期間</label><input id="ctrTerm" placeholder="12ヶ月" /></div>
+          <div class="form-group">
+            <label>支払方法</label>
+            <select id="ctrPaymentMethod">
+              <option value="bank">銀行振込</option>
+              <option value="card">クレジットカード</option>
+              <option value="direct_debit">口座振替</option>
+            </select>
+          </div>
+          <div class="form-group"><label>入金予定日</label><input id="ctrPayDate" placeholder="毎月25日" /></div>
+          <div class="form-group"><label>契約日</label><input id="ctrDateContract" type="date" /></div>
+          <div class="form-group"><label>納品日</label><input id="ctrDateDelivery" type="date" /></div>
+          <div class="form-group"><label>サービス開始日</label><input id="ctrStart" type="date" /></div>
+          <div class="form-group"><label>サービス満了予定日</label><input id="ctrEnd" type="date" /></div>
+          <div class="form-group">
+            <label>契約ステータス</label>
+            <select id="ctrStatus">
+            </select>
+          </div>
+          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+            <button class="btn-add" id="contract-save-btn" onclick="saveContract()">このサービス詳細を追加する</button>
+            <button class="btn-refresh" id="contract-cancel-btn" style="display:none;" onclick="cancelEditContract()">編集をキャンセル</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-header" style="border-top: 1px solid var(--border);">
+        <h2>フェーズ / ステータス設定</h2>
+      </div>
+      <div class="form-body" style="border-bottom: 1px solid var(--border);">
+        <div class="grid-form">
+          <div class="form-group">
+            <label>フェーズ値</label>
+            <input id="phaseId" type="hidden" />
+            <input id="phaseValue" placeholder="運用中" />
+          </div>
+          <div class="form-group">
+            <label>フェーズ表示名</label>
+            <input id="phaseLabel" placeholder="リード" />
+          </div>
+          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+            <button class="btn-add" id="phase-save-btn" onclick="addContractOption('phase')">フェーズを追加</button>
+            <button class="btn-refresh" id="phase-cancel-btn" style="display:none;" onclick="cancelContractOptionEdit('phase')">編集をキャンセル</button>
+          </div>
+          <div class="full-width"><strong>登録済みフェーズ:</strong> <span id="phaseOptionsList">-</span></div>
+
+          <div class="form-group">
+            <label>契約ステータス値</label>
+            <input id="statusId" type="hidden" />
+            <input id="statusValue" placeholder="稼働中" />
+          </div>
+          <div class="form-group">
+            <label>契約ステータス表示名</label>
+            <input id="statusLabel" placeholder="稼働中" />
+          </div>
+          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+            <button class="btn-add" id="status-save-btn" onclick="addContractOption('status')">契約ステータスを追加</button>
+            <button class="btn-refresh" id="status-cancel-btn" style="display:none;" onclick="cancelContractOptionEdit('status')">編集をキャンセル</button>
+          </div>
+          <div class="full-width"><strong>登録済み契約ステータス:</strong> <span id="statusOptionsList">-</span></div>
+
+          <div class="form-group">
+            <label>顧客ステータス値</label>
+            <input id="accountStatusId" type="hidden" />
+            <input id="accountStatusValue" placeholder="active" />
+          </div>
+          <div class="form-group">
+            <label>顧客ステータス表示名</label>
+            <input id="accountStatusLabel" placeholder="稼働中" />
+          </div>
+          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+            <button class="btn-add" id="account-status-save-btn" onclick="saveAccountStatusOption()">顧客ステータスを追加</button>
+            <button class="btn-refresh" id="account-status-cancel-btn" style="display:none;" onclick="cancelAccountStatusEdit()">編集をキャンセル</button>
+          </div>
+          <div class="full-width"><strong>登録済み顧客ステータス:</strong> <span id="accountStatusOptionsList">-</span></div>
+        </div>
+      </div>
+
+      <div class="card-header" style="border-top: 1px solid var(--border);">
+        <h2>登録済みのサービス詳細一覧</h2>
+      </div>
+      <div class="table-container">
+        <table id="ctrTable"></table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const j = async (u, o={}) => {
+      const response = await fetch(u, o);
+      const json = await response.json();
+      if (!response.ok || json?.success === false) {
+        throw new Error(json?.error || 'request failed');
+      }
+      return json;
+    };
+    const SERVICE_LINKS = [
+      { key: 'ai', label: 'Ai', url: 'http://localhost:3000/admin' },
+      { key: 'console', label: 'Console', url: 'http://localhost:3007/admin' },
+      { key: 'trust', label: 'Trust', url: 'http://localhost:3002/admin' },
+      { key: 'ad', label: 'Ad', url: 'http://localhost:3003/admin' },
+      { key: 'video', label: 'Video', url: 'http://localhost:3004/admin' },
+      { key: 'opt', label: 'Opt', url: 'http://localhost:3005/admin' },
+      { key: 'base', label: 'Base', url: 'http://localhost:3006/admin' },
+      { key: 'studio', label: 'Studio', url: 'http://localhost:3001/admin' }
+    ];
+    const customerId = decodeURIComponent(location.pathname.split('/').pop() || '');
+    let account = null;
+    let plans = [];
+    let contracts = [];
+    let phaseOptions = [];
+    let statusOptions = [];
+    let accountStatusOptions = [];
+    let editingContractId = null;
+
+    const escapeHtml = (text) => String(text ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+
+    function renderServiceNav() {
+      const nav = document.getElementById('service-nav');
+      nav.innerHTML = SERVICE_LINKS.map((service) => (
+        `<a href="${service.url}" target="_blank" rel="noopener noreferrer">${service.label}</a>`
+      )).join('');
+    }
+
+    function setContractSelectOptions() {
+      document.getElementById('ctrPhase').innerHTML = phaseOptions.map((option) => (
+        `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`
+      )).join('');
+      document.getElementById('ctrStatus').innerHTML = statusOptions.map((option) => (
+        `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`
+      )).join('');
+    }
+
+    function renderOptionChips(type, list) {
+      const targetId = type === 'phase' ? 'phaseOptionsList' : 'statusOptionsList';
+      const node = document.getElementById(targetId);
+      if (!list.length) {
+        node.innerHTML = '-';
+        return;
+      }
+      node.innerHTML = list.map((item) => (
+        `<span style="display:inline-flex;align-items:center;gap:8px;margin:4px 8px 4px 0;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:#fff;">
+          <span>${escapeHtml(item.label)} <small style="color:#64748b;">(${escapeHtml(item.value)})</small></span>
+          <button class="btn-refresh" style="padding:2px 6px;font-size:11px;" onclick="startEditContractOption('${type}', '${item.id}')">編集</button>
+          <button class="btn-delete" style="padding:2px 6px;font-size:11px;" onclick="deleteContractOption('${item.id}')">削除</button>
+        </span>`
+      )).join('');
+    }
+
+    function renderPlanMasterList() {
+      const node = document.getElementById('planMasterList');
+      if (!plans.length) {
+        node.innerHTML = '-';
+        return;
+      }
+      node.innerHTML = plans.map((plan) => (
+        `<span style="display:inline-flex;align-items:center;gap:8px;margin:4px 8px 4px 0;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:#fff;">
+          <span>${escapeHtml(plan.name)} <small style="color:#64748b;">(${escapeHtml(plan.code)})</small></span>
+          <button class="btn-refresh" style="padding:2px 6px;font-size:11px;" onclick="startEditPlan('${plan.id}')">編集</button>
+          <button class="btn-delete" style="padding:2px 6px;font-size:11px;" onclick="del('/api/plans/${plan.id}')">削除</button>
+        </span>`
+      )).join('');
+    }
+
+    function renderAccountStatusChips() {
+      const node = document.getElementById('accountStatusOptionsList');
+      if (!accountStatusOptions.length) {
+        node.innerHTML = '-';
+        return;
+      }
+
+      node.innerHTML = accountStatusOptions.map((item) => (
+        `<span style="display:inline-flex;align-items:center;gap:8px;margin:4px 8px 4px 0;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:#fff;">
+          <span>${escapeHtml(item.label)} <small style="color:#64748b;">(${escapeHtml(item.value)})</small></span>
+          <button class="btn-refresh" style="padding:2px 6px;font-size:11px;" onclick="startEditAccountStatus('${item.id}')">編集</button>
+          <button class="btn-delete" style="padding:2px 6px;font-size:11px;" onclick="deleteAccountStatusOption('${item.id}')">削除</button>
+        </span>`
+      )).join('');
+    }
+
+    function setAccountStatusSelectOptions() {
+      const select = document.getElementById('accStatus');
+      select.innerHTML = accountStatusOptions.map((option) => (
+        `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`
+      )).join('');
+    }
+
+    async function loadContractOptions() {
+      const [phaseRes, statusRes] = await Promise.all([
+        j('/api/contract-options?optionType=phase'),
+        j('/api/contract-options?optionType=status')
+      ]);
+      phaseOptions = Array.isArray(phaseRes.options) ? phaseRes.options : [];
+      statusOptions = Array.isArray(statusRes.options) ? statusRes.options : [];
+      setContractSelectOptions();
+      renderOptionChips('phase', phaseOptions);
+      renderOptionChips('status', statusOptions);
+    }
+
+    async function loadAccountStatusOptions() {
+      const res = await j('/api/account-status-options');
+      accountStatusOptions = Array.isArray(res.options) ? res.options : [];
+      setAccountStatusSelectOptions();
+      renderAccountStatusChips();
+    }
+
+    function setPlanOptions(selectedPlanId) {
+      document.getElementById('ctrPlan').innerHTML = `<option value=''>プランを選択してください</option>` + 
+        plans.map(p => `<option value='${p.id}'>${p.name} (${p.code})</option>`).join('');
+      if (selectedPlanId) document.getElementById('ctrPlan').value = selectedPlanId;
+      renderPlanMasterList();
+    }
+
+    function startEditPlan(planId) {
+      const plan = plans.find((item) => item.id === planId);
+      if (!plan) return;
+      document.getElementById('planEditId').value = plan.id;
+      document.getElementById('planCode').value = plan.code || '';
+      document.getElementById('planName').value = plan.name || '';
+      document.getElementById('planDesc').value = plan.description || '';
+      document.getElementById('planPrice').value = String(plan.defaultPriceYen || 0);
+      document.getElementById('plan-save-btn').textContent = 'このプランを更新する';
+      document.getElementById('plan-cancel-btn').style.display = 'inline-block';
+    }
+
+    function cancelPlanEdit() {
+      document.getElementById('planEditId').value = '';
+      document.getElementById('planCode').value = '';
+      document.getElementById('planName').value = '';
+      document.getElementById('planDesc').value = '';
+      document.getElementById('planPrice').value = '0';
+      document.getElementById('plan-save-btn').textContent = 'このプランを追加する';
+      document.getElementById('plan-cancel-btn').style.display = 'none';
+    }
+
+    function startEditContractOption(type, id) {
+      const list = type === 'phase' ? phaseOptions : statusOptions;
+      const item = list.find((option) => option.id === id);
+      if (!item) return;
+
+      document.getElementById(`${type}Id`).value = item.id;
+      document.getElementById(`${type}Value`).value = item.value;
+      document.getElementById(`${type}Label`).value = item.label;
+      document.getElementById(`${type}-save-btn`).textContent = type === 'phase' ? 'フェーズを更新' : '契約ステータスを更新';
+      document.getElementById(`${type}-cancel-btn`).style.display = 'inline-block';
+    }
+
+    function cancelContractOptionEdit(type) {
+      document.getElementById(`${type}Id`).value = '';
+      document.getElementById(`${type}Value`).value = '';
+      document.getElementById(`${type}Label`).value = '';
+      document.getElementById(`${type}-save-btn`).textContent = type === 'phase' ? 'フェーズを追加' : '契約ステータスを追加';
+      document.getElementById(`${type}-cancel-btn`).style.display = 'none';
+    }
+
+    function startEditAccountStatus(id) {
+      const item = accountStatusOptions.find((option) => option.id === id);
+      if (!item) return;
+      document.getElementById('accountStatusId').value = item.id;
+      document.getElementById('accountStatusValue').value = item.value;
+      document.getElementById('accountStatusLabel').value = item.label;
+      document.getElementById('account-status-save-btn').textContent = '顧客ステータスを更新';
+      document.getElementById('account-status-cancel-btn').style.display = 'inline-block';
+    }
+
+    function cancelAccountStatusEdit() {
+      document.getElementById('accountStatusId').value = '';
+      document.getElementById('accountStatusValue').value = '';
+      document.getElementById('accountStatusLabel').value = '';
+      document.getElementById('account-status-save-btn').textContent = '顧客ステータスを追加';
+      document.getElementById('account-status-cancel-btn').style.display = 'none';
+    }
+
+    function renderContracts() {
+      const getOptionLabel = (optionType, rawValue) => {
+        const list = optionType === 'phase' ? phaseOptions : statusOptions;
+        const matched = list.find((item) => item.value === rawValue);
+        return matched?.label || rawValue || '-';
+      };
+
+      document.getElementById('ctrTable').innerHTML = `
+        <tr>
+          <th>プラン名</th>
+          <th>フェーズ</th>
+          <th>期間</th>
+          <th>月額費用</th>
+          <th>ステータス</th>
+          <th>操作</th>
+        </tr>` +
+        contracts.map(c => {
+          const p = plans.find(x => x.id===c.planId);
+          return `
+            <tr>
+              <td><strong>${escapeHtml(p?.name || '不明なプラン')}</strong></td>
+              <td>${escapeHtml(getOptionLabel('phase', c.phase))}</td>
+              <td>${escapeHtml(c.startDate)} ～ ${escapeHtml(c.endDate || '継続')}</td>
+              <td>¥${Number(c.priceYen||0).toLocaleString()}</td>
+              <td><code>${escapeHtml(getOptionLabel('status', c.status))}</code></td>
+              <td>
+                <button class='btn-refresh' style="padding:4px 8px; font-size:12px;" onclick="startEditContract('${c.id}')">編集</button>
+                <button class='btn-delete' style="padding:4px 8px; font-size:12px;" onclick="del('/api/contracts/${c.id}')">削除</button>
+              </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function resetContractForm() {
+      editingContractId = null;
+      document.getElementById('ctrId').value = '';
+      setPlanOptions('');
+      document.getElementById('ctrPhase').value = phaseOptions[0]?.value || '';
+      document.getElementById('ctrPriceInitial').value = '0';
+      document.getElementById('ctrPrice').value = '0';
+      document.getElementById('ctrTerm').value = '';
+      document.getElementById('ctrPaymentMethod').value = 'bank';
+      document.getElementById('ctrPayDate').value = '';
+      document.getElementById('ctrDateDelivery').value = '';
+      document.getElementById('ctrEnd').value = '';
+      document.getElementById('ctrStatus').value = statusOptions[0]?.value || '';
+      document.getElementById('contract-save-btn').textContent = 'このサービス詳細を追加する';
+      document.getElementById('contract-cancel-btn').style.display = 'none';
+    }
+
+    function startEditContract(contractId) {
+      const contract = contracts.find(item => item.id === contractId);
+      if (!contract) return;
+      editingContractId = contract.id;
+      document.getElementById('ctrId').value = contract.id;
+      setPlanOptions(contract.planId);
+      document.getElementById('ctrPhase').value = contract.phase || phaseOptions[0]?.value || '';
+      document.getElementById('ctrPriceInitial').value = String(contract.priceInitial || 0);
+      document.getElementById('ctrPrice').value = String(contract.priceYen || 0);
+      document.getElementById('ctrTerm').value = contract.term || '';
+      document.getElementById('ctrPaymentMethod').value = contract.paymentMethod || 'bank';
+      document.getElementById('ctrPayDate').value = contract.payDate || '';
+      document.getElementById('ctrDateContract').value = contract.dateContract || '';
+      document.getElementById('ctrDateDelivery').value = contract.dateDelivery || '';
+      document.getElementById('ctrStart').value = contract.startDate || '';
+      document.getElementById('ctrEnd').value = contract.endDate || '';
+      document.getElementById('ctrStatus').value = contract.status || statusOptions[0]?.value || '';
+      document.getElementById('contract-save-btn').textContent = 'このサービス詳細を更新する';
+      document.getElementById('contract-cancel-btn').style.display = 'inline-block';
+      window.scrollTo({ top: document.querySelector('.section-service').offsetTop - 80, behavior: 'smooth' });
+    }
+
+    function cancelEditContract() {
+      resetContractForm();
+    }
+
+    async function refreshAll() {
+      const [accRes, planRes] = await Promise.all([
+        j('/api/accounts'),
+        j('/api/plans?includeInactive=1')
+      ]);
+      const accounts = Array.isArray(accRes.accounts) ? accRes.accounts : [];
+      account = accounts.find(a => a.id === customerId) || null;
+      plans = Array.isArray(planRes.plans) ? planRes.plans : [];
+
+      if (!account) {
+        alert('対象顧客が見つかりません。');
+        location.href = '/admin';
+        return;
+      }
+
+      document.getElementById('accPalette').value = account.paletteId || '';
+      document.getElementById('accName').value = account.name || '';
+      document.getElementById('accShopName').value = account.shopName || '';
+      document.getElementById('accPersonName').value = account.personName || '';
+      document.getElementById('accPersonKana').value = account.personKana || '';
+      document.getElementById('accZip').value = account.zip || '';
+      document.getElementById('accAddress').value = account.address || '';
+      document.getElementById('accPhone').value = account.phone || '';
+      document.getElementById('accMobile').value = account.mobile || '';
+      document.getElementById('accEmail').value = account.contactEmail || '';
+      document.getElementById('accChatLoginId').value = account.chatLoginId || '';
+      document.getElementById('accChatPassword').value = account.chatPassword || '';
+      document.getElementById('accStatus').value = account.status || 'active';
+      if (document.getElementById('accStatus').value !== (account.status || '')) {
+        const fallback = document.createElement('option');
+        fallback.value = account.status || 'active';
+        fallback.textContent = account.status || 'active';
+        document.getElementById('accStatus').appendChild(fallback);
+        document.getElementById('accStatus').value = account.status || 'active';
+      }
+      document.getElementById('accMeta').innerHTML = `システム内部ID: <code>${account.id}</code>`;
+
+      setPlanOptions(editingContractId ? document.getElementById('ctrPlan').value : '');
+
+      const ctrRes = await j(`/api/contracts?accountId=${encodeURIComponent(account.id)}`);
+      contracts = Array.isArray(ctrRes.contracts) ? ctrRes.contracts : [];
+      renderContracts();
+
+      if (editingContractId) {
+        const exists = contracts.some(item => item.id === editingContractId);
+        if (exists) startEditContract(editingContractId);
+        else resetContractForm();
+      }
+    }
+
+    async function saveAccount() {
+      const res = await j('/api/accounts', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+          id: account.id,
+          paletteId: document.getElementById('accPalette').value,
+          name: document.getElementById('accName').value,
+          contactEmail: document.getElementById('accEmail').value || null,
+          chatLoginId: document.getElementById('accChatLoginId').value || null,
+          chatPassword: document.getElementById('accChatPassword').value || null,
+          status: document.getElementById('accStatus').value,
+          // 拡張項目
+          shopName: document.getElementById('accShopName').value,
+          personName: document.getElementById('accPersonName').value,
+          personKana: document.getElementById('accPersonKana').value,
+          zip: document.getElementById('accZip').value,
+          address: document.getElementById('accAddress').value,
+          phone: document.getElementById('accPhone').value,
+          mobile: document.getElementById('accMobile').value
+        })
+      });
+      if (!res.success) { alert(res.error || '更新失敗'); return; }
+      alert('顧客情報を更新しました');
+      refreshAll();
+    }
+
+    async function savePlan() {
+      const code = document.getElementById('planCode').value.trim();
+      const name = document.getElementById('planName').value.trim();
+      if (!code || !name) {
+        alert('プランコードとプラン名は必須です');
+        return;
+      }
+
+      const res = await j('/api/plans', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          id: document.getElementById('planEditId').value || undefined,
+          code,
+          name,
+          description: document.getElementById('planDesc').value || null,
+          defaultPriceYen: Number(document.getElementById('planPrice').value || 0)
+        })
+      });
+
+      if (!res.success) { alert(res.error || 'プラン追加失敗'); return; }
+      alert(document.getElementById('planEditId').value ? 'プランを更新しました' : 'プランを追加しました');
+      cancelPlanEdit();
+      refreshAll();
+    }
+
+    async function saveContract() {
+      const planId = document.getElementById('ctrPlan').value;
+      if(!planId) { alert('プランを選択してください'); return; }
+
+      const res = await j('/api/contracts', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+          id: document.getElementById('ctrId').value || undefined,
+          accountId: account.id,
+          planId: planId,
+          phase: document.getElementById('ctrPhase').value,
+          priceInitial: Number(document.getElementById('ctrPriceInitial').value || 0),
+          priceYen: Number(document.getElementById('ctrPrice').value || 0),
+          term: document.getElementById('ctrTerm').value,
+          paymentMethod: document.getElementById('ctrPaymentMethod').value,
+          payDate: document.getElementById('ctrPayDate').value,
+          dateContract: document.getElementById('ctrDateContract').value,
+          dateDelivery: document.getElementById('ctrDateDelivery').value,
+          startDate: document.getElementById('ctrStart').value,
+          endDate: document.getElementById('ctrEnd').value || null,
+          status: document.getElementById('ctrStatus').value
+        })
+      });
+      if (!res.success) { alert(res.error || '保存失敗'); return; }
+      alert(editingContractId ? 'サービス詳細を更新しました' : 'サービス詳細を追加しました');
+      resetContractForm();
+      refreshAll();
+    }
+
+    async function addContractOption(optionType) {
+      const valueId = optionType === 'phase' ? 'phaseValue' : 'statusValue';
+      const labelId = optionType === 'phase' ? 'phaseLabel' : 'statusLabel';
+      const value = document.getElementById(valueId).value.trim();
+      const label = document.getElementById(labelId).value.trim();
+      if (!value || !label) {
+        alert('値と表示名は必須です');
+        return;
+      }
+
+      await j('/api/contract-options', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: document.getElementById(`${optionType}Id`).value || undefined,
+          optionType,
+          value,
+          label,
+          isActive: true,
+        })
+      });
+
+      cancelContractOptionEdit(optionType);
+      await loadContractOptions();
+      if (editingContractId) startEditContract(editingContractId);
+    }
+
+    async function deleteContractOption(id) {
+      if (!confirm('この選択肢を削除しますか？')) return;
+      await fetch(`/api/contract-options/${id}`, { method: 'DELETE' });
+      await loadContractOptions();
+      if (editingContractId) startEditContract(editingContractId);
+      else resetContractForm();
+    }
+
+    async function saveAccountStatusOption() {
+      const id = document.getElementById('accountStatusId').value || undefined;
+      const value = document.getElementById('accountStatusValue').value.trim();
+      const label = document.getElementById('accountStatusLabel').value.trim();
+      if (!value || !label) {
+        alert('値と表示名は必須です');
+        return;
+      }
+
+      await j('/api/account-status-options', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, value, label, isActive: true }),
+      });
+
+      cancelAccountStatusEdit();
+      await loadAccountStatusOptions();
+      if (account?.status) {
+        document.getElementById('accStatus').value = account.status;
+      }
+    }
+
+    async function deleteAccountStatusOption(id) {
+      if (!confirm('この顧客ステータスを削除しますか？')) return;
+      await fetch(`/api/account-status-options/${id}`, { method: 'DELETE' });
+      await loadAccountStatusOptions();
+      if (account?.status) {
+        document.getElementById('accStatus').value = account.status;
+      }
+    }
+
+    async function deleteAccount() {
+      if (!confirm('この顧客を完全に削除しますか？')) return;
+      await fetch(`/api/accounts/${account.id}`, { method: 'DELETE' });
+      location.href = '/admin';
+    }
+
+    async function del(url) {
+      if (!confirm('このデータを削除しますか？')) return;
+      await fetch(url, { method: 'DELETE' });
+      refreshAll();
+    }
+
+    // 初期日付セット
+    const today = new Date().toISOString().slice(0,10);
+    document.getElementById('ctrDateContract').value = today;
+    document.getElementById('ctrStart').value = today;
+    
+    renderServiceNav();
+    Promise.all([loadContractOptions(), loadAccountStatusOptions()])
+      .then(() => {
+        cancelPlanEdit();
+        resetContractForm();
+        return refreshAll();
+      })
+      .catch((error) => {
+        alert(error.message);
+      });
+  </script>
+</body>
+</html>

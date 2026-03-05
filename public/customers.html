@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pal-db 顧客一覧</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #f1f5f9;
+      --card-bg: #ffffff;
+      --text-main: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --danger: #ef4444;
+      --accent-blue: #dbeafe;
+      --success: #10b981;
+    }
+
+    body { font-family: 'Helvetica Neue', Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; margin: 0; background: var(--bg); color: var(--text-main); line-height: 1.6; }
+
+    header { background: #0f172a; color: #fff; padding: 1rem 1.25rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
+    .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; }
+    .header-title { font-size: 1.2rem; font-weight: 700; }
+    .header-link { color: #fff; text-decoration: none; font-size: .85rem; padding: .45rem .75rem; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; }
+    .header-link:hover { background: rgba(255,255,255,.1); }
+
+    .service-nav { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: .5rem; }
+    .service-nav a {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      text-decoration: none;
+      font-size: .78rem;
+      font-weight: 700;
+      color: #dbeafe;
+      border: 1px solid rgba(219,234,254,0.35);
+      border-radius: 8px;
+      padding: .45rem .5rem;
+      transition: .2s;
+      background: rgba(37,99,235,0.15);
+    }
+    .service-nav a:hover { background: rgba(37,99,235,0.35); color: #fff; }
+
+    main { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 1.25rem; }
+
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,.1); overflow: hidden; }
+    .section-customer { border-top: 5px solid var(--primary); }
+    .section-plan { border-top: 5px solid var(--success); }
+
+    .card-header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: #f8fafc; display:flex; justify-content:space-between; align-items:center; }
+    .card-header h2 { margin: 0; font-size: 1.02rem; font-weight: 700; }
+
+    .form-body { padding: 1rem 1.25rem; }
+    .grid-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .9rem; }
+
+    .form-group { display: flex; flex-direction: column; gap: .35rem; }
+    .form-group label { font-size: .83rem; font-weight: 700; color: #475569; display:flex; align-items:center; gap: 4px; }
+    .form-group label::before { content: ''; display:inline-block; width: 3px; height: 12px; background: var(--primary); border-radius: 2px; }
+    .section-plan .form-group label::before { background: var(--success); }
+
+    input, select { padding: .66rem; border: 1px solid var(--border); border-radius: 7px; font-size: .93rem; background: #fff; color: var(--text-main); transition: .2s; }
+    input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+
+    .actions { margin-top: 1rem; padding: 1rem 1.25rem; background: #f8fafc; border-top: 1px solid var(--border); display: flex; gap: .75rem; align-items: center; }
+
+    button { padding: .7rem 1.1rem; border-radius: 8px; font-size: .92rem; font-weight: 700; cursor: pointer; transition: .2s; border: none; }
+    .btn-save { background: var(--primary); color: #fff; }
+    .btn-add { background: var(--success); color: #fff; }
+    .btn-refresh { background: #64748b; color: #fff; }
+    .btn-delete { background: #fff; color: var(--danger); border: 1px solid #fecaca; }
+    .btn-save:hover, .btn-add:hover, .btn-refresh:hover { opacity: .92; transform: translateY(-1px); }
+    .btn-delete:hover { background: var(--danger); color: #fff; }
+
+    .table-container { overflow-x: auto; padding: .75rem 1rem 1rem; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .88rem; }
+    th { background: #f8fafc; padding: .8rem; text-align: left; font-weight: 700; color: var(--text-muted); border-bottom: 2px solid var(--border); }
+    td { padding: .8rem; border-bottom: 1px solid var(--border); }
+
+    .badge-link {
+      display: inline-block;
+      text-decoration: none;
+      font-size: .76rem;
+      font-weight: 700;
+      color: #fff;
+      background: #1f2937;
+      border-radius: 7px;
+      padding: .35rem .55rem;
+    }
+    .badge-link:hover { background: var(--primary); }
+
+    .muted { color: var(--text-muted); font-size: .82rem; }
+
+    @media (max-width: 960px) {
+      .service-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+    @media (max-width: 540px) {
+      .service-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <span class="header-title">pal-db 顧客一覧</span>
+      <a class="header-link" href="/admin">一覧を再表示</a>
+    </div>
+    <nav class="service-nav" id="serviceNav"></nav>
+  </header>
+
+  <main>
+    <section class="card section-customer">
+      <div class="card-header">
+        <h2>【新規顧客作成】</h2>
+        <span class="muted">顧客IDは自動採番（英字1文字 + 数字4桁）</span>
+      </div>
+      <div class="form-body">
+        <div class="grid-form">
+          <div class="form-group"><label>顧客名（必須）</label><input id="name" placeholder="例: 株式会社〇〇" /></div>
+          <div class="form-group"><label>メール（任意）</label><input id="contactEmail" placeholder="example@domain.com" /></div>
+          <div class="form-group"><label>ステータス</label><select id="createStatus"></select></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn-add" onclick="createAccount()">顧客を作成</button>
+      </div>
+    </section>
+
+    <section class="card section-plan">
+      <div class="card-header">
+        <h2>【プラン追加】</h2>
+      </div>
+      <div class="form-body">
+        <div class="grid-form">
+          <div class="form-group"><label>プランコード（必須）</label><input id="planCode" placeholder="例: STUDIO_STD" /></div>
+          <div class="form-group"><label>プラン名（必須）</label><input id="planName" placeholder="例: Studio Standard" /></div>
+          <div class="form-group"><label>請求周期</label><select id="planCycle"><option value="monthly">monthly</option><option value="yearly">yearly</option><option value="one_time">one_time</option></select></div>
+          <div class="form-group"><label>標準月額（円）</label><input id="planPrice" type="number" value="0" /></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn-add" onclick="createPlan()">プランを追加</button>
+      </div>
+      <div class="table-container">
+        <table id="planTable"></table>
+      </div>
+    </section>
+
+    <section class="card section-customer">
+      <div class="card-header">
+        <h2>【顧客一覧】</h2>
+      </div>
+      <div class="form-body">
+        <div class="grid-form">
+          <div class="form-group"><label>検索</label><input id="searchText" placeholder="paletteId / 顧客名" oninput="applyFilters()" /></div>
+          <div class="form-group"><label>ステータス絞り込み</label><select id="statusFilter" onchange="applyFilters()"><option value="">全ステータス</option></select></div>
+          <div class="form-group"><label>表示件数</label><input id="resultCount" readonly /></div>
+          <div class="form-group"><label>操作</label><button class="btn-refresh" onclick="refreshAll()">再読込</button></div>
+        </div>
+      </div>
+      <div class="table-container">
+        <table id="accountTable"></table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const j = (u, o = {}) => fetch(u, o).then(r => r.json());
+
+    const SERVICE_LINKS = [
+      { key: 'ai', label: 'Ai', url: 'http://localhost:3000/admin' },
+      { key: 'console', label: 'Console', url: 'http://localhost:3007/admin' },
+      { key: 'trust', label: 'Trust', url: 'http://localhost:3002/admin' },
+      { key: 'ad', label: 'Ad', url: 'http://localhost:3003/admin' },
+      { key: 'video', label: 'Video', url: 'http://localhost:3004/admin' },
+      { key: 'opt', label: 'Opt', url: 'http://localhost:3005/admin' },
+      { key: 'base', label: 'Base', url: 'http://localhost:3006/admin' },
+      { key: 'studio', label: 'Studio', url: 'http://localhost:3001/admin' }
+    ];
+
+    let allAccounts = [];
+    let allPlans = [];
+    let accountStatusOptions = [];
+    let accountStatusLabelMap = {};
+
+    function initServiceNav() {
+      const nav = document.getElementById('serviceNav');
+      nav.innerHTML = SERVICE_LINKS.map(item => `<a href="${item.url}" target="_blank" rel="noreferrer">${item.label}</a>`).join('');
+    }
+
+    function renderPlans(plans) {
+      document.getElementById('planTable').innerHTML = `
+        <tr>
+          <th>code</th><th>name</th><th>cycle</th><th>標準月額</th><th>操作</th>
+        </tr>
+      ` + plans.map(p => `
+        <tr>
+          <td>${p.code}</td>
+          <td>${p.name}</td>
+          <td>${p.billingCycle}</td>
+          <td>¥${Number(p.defaultPriceYen || 0).toLocaleString()}</td>
+          <td><button class="btn-delete" onclick="deleteRow('/api/plans/${p.id}')">削除</button></td>
+        </tr>
+      `).join('');
+    }
+
+    function setStatusOptions() {
+      const createStatusEl = document.getElementById('createStatus');
+      const statusFilterEl = document.getElementById('statusFilter');
+
+      const knownStatuses = new Set(accountStatusOptions.map(o => o.value));
+      allAccounts.forEach(a => {
+        if (a.status && !knownStatuses.has(a.status)) {
+          knownStatuses.add(a.status);
+          accountStatusOptions.push({ value: a.status, label: a.status, isActive: false });
+        }
+      });
+
+      accountStatusLabelMap = accountStatusOptions.reduce((acc, cur) => {
+        acc[cur.value] = cur.label;
+        return acc;
+      }, {});
+
+      createStatusEl.innerHTML = accountStatusOptions
+        .filter(o => o.isActive !== false)
+        .map(o => `<option value="${o.value}">${o.label}</option>`)
+        .join('');
+
+      statusFilterEl.innerHTML = ['<option value="">全ステータス</option>']
+        .concat(accountStatusOptions.map(o => `<option value="${o.value}">${o.label}</option>`))
+        .join('');
+
+      if (!createStatusEl.value) {
+        createStatusEl.value = accountStatusOptions[0]?.value || 'active';
+      }
+    }
+
+    function statusLabel(value) {
+      return accountStatusLabelMap[value] || value;
+    }
+
+    function renderAccounts(accounts) {
+      document.getElementById('resultCount').value = `${accounts.length} 件`;
+      document.getElementById('accountTable').innerHTML = `
+        <tr>
+          <th>paletteId</th><th>顧客名</th><th>ステータス</th><th>更新日時</th><th>詳細</th>
+        </tr>
+      ` + accounts.map(a => `
+        <tr>
+          <td>${a.paletteId}</td>
+          <td>${a.name}</td>
+          <td>${statusLabel(a.status)}</td>
+          <td>${new Date(a.updatedAt).toLocaleString()}</td>
+          <td><a class="badge-link" href="/admin/customers/${a.id}">詳細を開く</a></td>
+        </tr>
+      `).join('');
+    }
+
+    function applyFilters() {
+      const text = (document.getElementById('searchText').value || '').trim().toLowerCase();
+      const status = document.getElementById('statusFilter').value;
+
+      const filtered = allAccounts.filter(a => {
+        const matchesText = !text || `${a.paletteId} ${a.name}`.toLowerCase().includes(text);
+        const matchesStatus = !status || a.status === status;
+        return matchesText && matchesStatus;
+      });
+
+      renderAccounts(filtered);
+    }
+
+    async function refreshAll() {
+      const [accountData, planData, statusData] = await Promise.all([
+        j('/api/accounts'),
+        j('/api/plans?includeInactive=1'),
+        j('/api/account-status-options?includeInactive=1')
+      ]);
+      allAccounts = Array.isArray(accountData.accounts) ? accountData.accounts : [];
+      allPlans = Array.isArray(planData.plans) ? planData.plans : [];
+      accountStatusOptions = Array.isArray(statusData.options) ? statusData.options.map(o => ({
+        value: o.value,
+        label: o.label,
+        isActive: o.isActive
+      })) : [];
+      setStatusOptions();
+      renderPlans(allPlans);
+      applyFilters();
+    }
+
+    async function createAccount() {
+      const name = document.getElementById('name').value.trim();
+      const contactEmail = document.getElementById('contactEmail').value.trim();
+      const status = document.getElementById('createStatus').value;
+
+      if (!name) {
+        alert('顧客名は必須です。');
+        return;
+      }
+
+      const res = await j('/api/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, contactEmail: contactEmail || null, status })
+      });
+
+      if (!res.success) {
+        alert(res.error || '顧客作成に失敗しました');
+        return;
+      }
+
+      document.getElementById('name').value = '';
+      document.getElementById('contactEmail').value = '';
+      if (accountStatusOptions.length > 0) {
+        const firstActive = accountStatusOptions.find(o => o.isActive !== false);
+        document.getElementById('createStatus').value = firstActive?.value || accountStatusOptions[0].value;
+      }
+
+      await refreshAll();
+      alert(`顧客を作成しました。顧客ID: ${res.account.paletteId}`);
+      window.location.href = `/admin/customers/${res.account.id}`;
+    }
+
+    async function createPlan() {
+      const code = document.getElementById('planCode').value.trim();
+      const name = document.getElementById('planName').value.trim();
+      const billingCycle = document.getElementById('planCycle').value;
+      const defaultPriceYen = Number(document.getElementById('planPrice').value || 0);
+
+      if (!code || !name) {
+        alert('プランコード と プラン名 は必須です。');
+        return;
+      }
+
+      const res = await j('/api/plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, name, billingCycle, defaultPriceYen, isActive: true })
+      });
+
+      if (!res.success) {
+        alert(res.error || 'プラン追加に失敗しました');
+        return;
+      }
+
+      document.getElementById('planCode').value = '';
+      document.getElementById('planName').value = '';
+      document.getElementById('planCycle').value = 'monthly';
+      document.getElementById('planPrice').value = '0';
+
+      await refreshAll();
+    }
+
+    async function deleteRow(url) {
+      if (!confirm('削除しますか？')) return;
+      await fetch(url, { method: 'DELETE' });
+      await refreshAll();
+    }
+
+    initServiceNav();
+    refreshAll();
+  </script>
+</body>
+</html>

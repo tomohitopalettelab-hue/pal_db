@@ -632,7 +632,7 @@ export const upsertAccount = async (input: Partial<AccountRecord> & { chatPasswo
     : asNullableString(existingAccount.chat_password_plain);
   const chatPasswordUpdatedAt = nextPasswordInput
     ? toIso(new Date())
-    : asNullableString(existingAccount.chat_password_updated_at);
+    : (existingAccount.chat_password_updated_at ? toIso(existingAccount.chat_password_updated_at) : null);
   const updatedAt = toIso(input.updatedAt || new Date());
 
   const result = await sql`

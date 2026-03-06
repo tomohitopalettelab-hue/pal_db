@@ -28,20 +28,57 @@
 
     .service-nav { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: .5rem; }
     .service-nav a {
+      position: relative;
+      overflow: hidden;
       display: inline-flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
       text-decoration: none;
-      font-size: .78rem;
-      font-weight: 700;
-      color: #dbeafe;
-      border: 1px solid rgba(219,234,254,0.35);
-      border-radius: 8px;
-      padding: .45rem .5rem;
-      transition: .2s;
-      background: rgba(37,99,235,0.15);
+      border-radius: 10px;
+      border: 1px solid rgba(191,219,254,0.45);
+      background:
+        linear-gradient(160deg, rgba(59,130,246,0.36), rgba(30,64,175,0.14)),
+        rgba(15,23,42,0.75);
+      min-height: 46px;
+      padding: .35rem .45rem;
+      color: #e2e8f0;
+      transition: transform .2s, box-shadow .2s, border-color .2s, background .2s;
+      box-shadow: 0 6px 18px -12px rgba(59,130,246,0.75);
     }
-    .service-nav a:hover { background: rgba(37,99,235,0.35); color: #fff; }
+    .service-nav a::before {
+      content: '';
+      position: absolute;
+      inset: -40% auto -40% -70%;
+      width: 45%;
+      transform: rotate(18deg);
+      background: linear-gradient(to right, rgba(255,255,255,0), rgba(255,255,255,.22), rgba(255,255,255,0));
+      transition: left .28s ease;
+      pointer-events: none;
+    }
+    .service-nav a:hover {
+      transform: translateY(-2px);
+      border-color: rgba(191,219,254,0.8);
+      background:
+        linear-gradient(160deg, rgba(37,99,235,0.52), rgba(30,64,175,0.18)),
+        rgba(15,23,42,0.85);
+      box-shadow: 0 14px 24px -16px rgba(96,165,250,0.9);
+      color: #fff;
+    }
+    .service-nav a:hover::before { left: 135%; }
+    .service-nav .service-label {
+      font-size: .77rem;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: .02em;
+    }
+    .service-nav .service-key {
+      margin-top: 3px;
+      font-size: .64rem;
+      letter-spacing: .08em;
+      color: #bfdbfe;
+      text-transform: uppercase;
+    }
 
     main { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 1.25rem; }
 
@@ -238,7 +275,12 @@
 
     function initServiceNav() {
       const nav = document.getElementById('serviceNav');
-      nav.innerHTML = SERVICE_LINKS.map(item => `<a href="${item.url}" target="_blank" rel="noreferrer">${item.label}</a>`).join('');
+      nav.innerHTML = SERVICE_LINKS.map(item => `
+        <a href="${item.url}" target="_blank" rel="noreferrer" title="${item.label}">
+          <span class="service-label">${item.label}</span>
+          <span class="service-key">${item.key}</span>
+        </a>
+      `).join('');
     }
 
     function renderPlans(plans) {

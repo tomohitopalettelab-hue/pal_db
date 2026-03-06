@@ -31,6 +31,37 @@
     .service-nav a { font-size: 0.8rem; padding: 0.4rem 0.7rem; border-radius: 999px; border: 1px solid rgba(255,255,255,0.35); background: rgba(255,255,255,0.06); }
 
     main { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 2rem; }
+
+    .tabs-shell {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.8rem;
+      box-shadow: 0 4px 10px -6px rgba(15, 23, 42, 0.3);
+    }
+    .tab-button {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.45rem 0.9rem;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-button:hover { background: #e2e8f0; }
+    .tab-button.active {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+      box-shadow: 0 6px 14px -10px rgba(37, 99, 235, 0.8);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
     
     .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); overflow: hidden; }
     
@@ -83,7 +114,15 @@
   </header>
 
   <main>
-    <section class="card section-customer">
+    <div class="tabs-shell" id="adminTabs">
+      <button class="tab-button" type="button" data-tab-target="customer">顧客情報</button>
+      <button class="tab-button" type="button" data-tab-target="plan">プラン管理</button>
+      <button class="tab-button" type="button" data-tab-target="service-form">サービス詳細</button>
+      <button class="tab-button" type="button" data-tab-target="settings">選択肢設定</button>
+      <button class="tab-button" type="button" data-tab-target="service-list">サービス一覧</button>
+    </div>
+
+    <section class="card section-customer tab-panel" data-tab-panel="customer">
       <div class="card-header">
         <h2>【顧客情報】</h2>
         <div id="accMeta" class="muted"></div>
@@ -119,7 +158,7 @@
       </div>
     </section>
 
-    <section class="card section-service">
+    <section class="card section-service tab-panel" data-tab-panel="plan">
       <div class="card-header">
         <h2>【プラン】の新規追加</h2>
       </div>
@@ -137,7 +176,9 @@
           <div class="full-width"><strong>登録済み契約プラン:</strong> <span id="planMasterList">-</span></div>
         </div>
       </div>
+    </section>
 
+    <section class="card section-service tab-panel" data-tab-panel="service-form">
       <div class="card-header">
         <h2>【サービス詳細】の新規追加</h2>
       </div>
@@ -180,7 +221,9 @@
           </div>
         </div>
       </div>
+    </section>
 
+    <section class="card section-service tab-panel" data-tab-panel="settings">
       <div class="card-header" style="border-top: 1px solid var(--border);">
         <h2>フェーズ / ステータス設定</h2>
       </div>
@@ -232,7 +275,9 @@
           <div class="full-width"><strong>登録済み顧客ステータス:</strong> <span id="accountStatusOptionsList">-</span></div>
         </div>
       </div>
+    </section>
 
+    <section class="card section-service tab-panel" data-tab-panel="service-list">
       <div class="card-header" style="border-top: 1px solid var(--border);">
         <h2>登録済みのサービス詳細一覧</h2>
       </div>
@@ -269,6 +314,29 @@
     let statusOptions = [];
     let accountStatusOptions = [];
     let editingContractId = null;
+    let activeAdminTab = 'customer';
+
+    function setActiveTab(tabName) {
+      activeAdminTab = tabName;
+      document.querySelectorAll('[data-tab-panel]').forEach((panel) => {
+        panel.classList.toggle('active', panel.dataset.tabPanel === tabName);
+      });
+      document.querySelectorAll('.tab-button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.tabTarget === tabName);
+      });
+    }
+
+    function initTabs() {
+      const buttons = document.querySelectorAll('.tab-button');
+      buttons.forEach((button) => {
+        button.addEventListener('click', () => {
+          const target = button.dataset.tabTarget;
+          if (!target) return;
+          setActiveTab(target);
+        });
+      });
+      setActiveTab('customer');
+    }
 
     const escapeHtml = (text) => String(text ?? '')
       .replaceAll('&', '&amp;')
@@ -376,6 +444,7 @@
     function startEditPlan(planId) {
       const plan = plans.find((item) => item.id === planId);
       if (!plan) return;
+      setActiveTab('plan');
       document.getElementById('planEditId').value = plan.id;
       document.getElementById('planCode').value = plan.code || '';
       document.getElementById('planName').value = plan.name || '';
@@ -486,6 +555,7 @@
     function startEditContract(contractId) {
       const contract = contracts.find(item => item.id === contractId);
       if (!contract) return;
+      setActiveTab('service-form');
       editingContractId = contract.id;
       document.getElementById('ctrId').value = contract.id;
       setPlanOptions(contract.planId);
@@ -502,7 +572,7 @@
       document.getElementById('ctrStatus').value = contract.status || statusOptions[0]?.value || '';
       document.getElementById('contract-save-btn').textContent = 'このサービス詳細を更新する';
       document.getElementById('contract-cancel-btn').style.display = 'inline-block';
-      window.scrollTo({ top: document.querySelector('.section-service').offsetTop - 80, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     function cancelEditContract() {
@@ -721,6 +791,7 @@
     document.getElementById('ctrDateContract').value = today;
     document.getElementById('ctrStart').value = today;
     
+    initTabs();
     renderServiceNav();
     Promise.all([loadContractOptions(), loadAccountStatusOptions()])
       .then(() => {

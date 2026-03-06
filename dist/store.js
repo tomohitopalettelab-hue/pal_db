@@ -509,7 +509,7 @@ export const upsertAccount = async (input) => {
         : asNullableString(existingAccount.chat_password_plain);
     const chatPasswordUpdatedAt = nextPasswordInput
         ? toIso(new Date())
-        : asNullableString(existingAccount.chat_password_updated_at);
+        : (existingAccount.chat_password_updated_at ? toIso(existingAccount.chat_password_updated_at) : null);
     const updatedAt = toIso(input.updatedAt || new Date());
     const result = await sql `
     INSERT INTO accounts (id, palette_id, name, contact_email, status, notes, chat_login_id, chat_password_hash, chat_password_plain, chat_password_updated_at, updated_at)

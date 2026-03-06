@@ -45,6 +45,32 @@
 
     main { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 1.25rem; }
 
+    .tabs-shell {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .55rem;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: .75rem;
+      box-shadow: 0 4px 8px -6px rgba(15,23,42,.25);
+    }
+    .tab-button {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #334155;
+      font-weight: 700;
+      font-size: .82rem;
+      padding: .42rem .85rem;
+      cursor: pointer;
+      transition: .2s;
+    }
+    .tab-button:hover { background: #e2e8f0; }
+    .tab-button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,.1); overflow: hidden; }
     .section-customer { border-top: 5px solid var(--primary); }
     .section-plan { border-top: 5px solid var(--success); }
@@ -110,7 +136,13 @@
   </header>
 
   <main>
-    <section class="card section-customer">
+    <div class="tabs-shell" id="customerTabs">
+      <button class="tab-button" type="button" data-tab-target="create-account">新規顧客作成</button>
+      <button class="tab-button" type="button" data-tab-target="plans">プラン追加</button>
+      <button class="tab-button" type="button" data-tab-target="accounts">顧客一覧</button>
+    </div>
+
+    <section class="card section-customer tab-panel" data-tab-panel="create-account">
       <div class="card-header">
         <h2>【新規顧客作成】</h2>
         <span class="muted">顧客IDは自動採番（英字1文字 + 数字4桁）</span>
@@ -127,7 +159,7 @@
       </div>
     </section>
 
-    <section class="card section-plan">
+    <section class="card section-plan tab-panel" data-tab-panel="plans">
       <div class="card-header">
         <h2>【プラン追加】</h2>
       </div>
@@ -147,7 +179,7 @@
       </div>
     </section>
 
-    <section class="card section-customer">
+    <section class="card section-customer tab-panel" data-tab-panel="accounts">
       <div class="card-header">
         <h2>【顧客一覧】</h2>
       </div>
@@ -183,6 +215,26 @@
     let allPlans = [];
     let accountStatusOptions = [];
     let accountStatusLabelMap = {};
+
+    function setActiveTab(tabName) {
+      document.querySelectorAll('[data-tab-panel]').forEach((panel) => {
+        panel.classList.toggle('active', panel.dataset.tabPanel === tabName);
+      });
+      document.querySelectorAll('.tab-button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.tabTarget === tabName);
+      });
+    }
+
+    function initTabs() {
+      document.querySelectorAll('.tab-button').forEach((button) => {
+        button.addEventListener('click', () => {
+          const target = button.dataset.tabTarget;
+          if (!target) return;
+          setActiveTab(target);
+        });
+      });
+      setActiveTab('create-account');
+    }
 
     function initServiceNav() {
       const nav = document.getElementById('serviceNav');
@@ -357,6 +409,7 @@
       await refreshAll();
     }
 
+    initTabs();
     initServiceNav();
     refreshAll();
   </script>

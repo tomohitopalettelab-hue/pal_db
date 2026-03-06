@@ -83,6 +83,31 @@ app.get('/api/accounts', async (_req: Request, res: Response) => {
   }
 });
 
+app.post('/api/verify-chat-login', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.id || '').trim();
+    const password = String(req.body?.password || '');
+    if (!id || !password) {
+      return res.status(400).json({ success: false, error: 'id and password are required' });
+    }
+
+    const result = await verifyChatLogin(id, password);
+    if (!result.success) {
+      return res.status(401).json({ success: false, error: 'invalid credentials' });
+    }
+
+    return res.json({
+      success: true,
+      accountId: result.accountId,
+      paletteId: result.paletteId,
+      accountName: result.accountName,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to verify login' });
+  }
+});
+
 app.post('/api/accounts', async (req: Request, res: Response) => {
   try {
     const account = await upsertAccount(req.body || {});

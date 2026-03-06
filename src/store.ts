@@ -1247,7 +1247,7 @@ export const verifyChatLogin = async (loginIdInput: string, passwordInput: strin
   if (!loginId || !password) return { success: false as const };
 
   const result = await sql`
-    SELECT id, palette_id, name, chat_password_hash
+    SELECT id, palette_id, name, chat_password_hash, chat_password_plain
     FROM accounts
     WHERE chat_login_id = ${loginId} OR palette_id = ${loginId}
     LIMIT 1
@@ -1256,8 +1256,15 @@ export const verifyChatLogin = async (loginIdInput: string, passwordInput: strin
   if (!result.rows.length) return { success: false as const };
   const row = (result.rows[0] || {}) as Row;
   const storedHash = asNullableString(row.chat_password_hash);
-  if (!storedHash || !verifyPassword(password, storedHash)) {
-    return { success: false as const };
+  if (storedHash) {
+    if (!verifyPassword(password, storedHash)) {
+      return { success: false as const };
+    }
+  } else {
+    const storedPlain = asNullableString(row.chat_password_plain);
+    if (!storedPlain || normalizePasswordInput(storedPlain) !== password) {
+      return { success: false as const };
+    }
   }
 
   return {

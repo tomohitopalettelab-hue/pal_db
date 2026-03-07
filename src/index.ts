@@ -335,7 +335,7 @@ const buildCreatomateModifications = (plan: Record<string, unknown>) => {
     const bg = String(scene?.imageUrl || '').trim();
     const title = String(scene?.title || '').trim();
     const sub = String(scene?.subtitle || '').trim();
-    if (bg) modifications.push({ id: `scene_${slot}_bg`, source: bg });
+    if (bg) modifications.push({ id: `scene_${slot}`, source: bg });
     if (title) modifications.push({ id: `scene_${slot}_title`, text: title });
     if (sub) modifications.push({ id: `scene_${slot}_sub`, text: sub });
     if (scene?.durationSec) {

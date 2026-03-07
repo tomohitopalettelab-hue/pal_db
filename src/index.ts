@@ -195,15 +195,24 @@ const runFfmpeg = async (args: string[]) => {
   });
 };
 
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 8000;
+
 const downloadImage = async (url: string, dir: string): Promise<string | null> => {
   try {
-    const response = await fetch(url);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
     if (!response.ok) return null;
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength && contentLength > MAX_IMAGE_BYTES) return null;
     const contentType = response.headers.get('content-type') || '';
     const extension = contentType.includes('png') ? 'png' : 'jpg';
     const name = `pal-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
     const filePath = path.join(dir, name);
     const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_IMAGE_BYTES) return null;
     await fs.writeFile(filePath, buffer);
     return filePath;
   } catch (error) {
@@ -568,7 +577,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
 
     const payload = (job.payload || {}) as Record<string, unknown>;
     const resolution = parseResolution(String(payload?.resolution || '1080x1920'));
-    const durationSec = Number(payload?.durationSec || 30) || 30;
+    const durationSec = Math.min(Number(payload?.durationSec || 30) || 30, 30);
     const mainText = String(payload?.telopMain || '').trim();
     const subText = String(payload?.telopSub || '').trim();
     const colorPrimary = String(payload?.colorPrimary || '#E95464').trim() || '#E95464';
@@ -578,9 +587,17 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     await fs.mkdir(outputDir, { recursive: true });
     const outputName = `${jobId}.mp4`;
     const outputPath = path.join(outputDir, outputName);
+    const tempOutputPath = path.join(tmpdir(), `pal-video-${jobId}.mp4`);
 
     const tempDir = path.join(tmpdir(), 'pal-video');
     await fs.mkdir(tempDir, { recursive: true });
+    console.log('[pal-db] pal-video generate start', {
+      jobId,
+      durationSec,
+      resolution,
+      hasImage: imageUrls.length > 0,
+    });
+
     const imagePath = imageUrls.length > 0
       ? await downloadImage(String(imageUrls[0]), tempDir)
       : null;
@@ -604,7 +621,12 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
           '-t', String(durationSec),
           '-vf', vf,
           '-r', '30',
-          outputPath,
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-threads', '1',
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          tempOutputPath,
         ]
       : [
           '-y',
@@ -614,10 +636,21 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
           '-i', `color=c=${colorPrimary}:s=${resolution.width}x${resolution.height}:d=${durationSec}`,
           '-vf', vf,
           '-r', '30',
-          outputPath,
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-threads', '1',
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          tempOutputPath,
         ];
 
     await runFfmpeg(args);
+    await fs.rename(tempOutputPath, outputPath).catch(async () => {
+      await fs.copyFile(tempOutputPath, outputPath);
+      await fs.unlink(tempOutputPath).catch(() => undefined);
+    });
+
+    console.log('[pal-db] pal-video generate done', { jobId, outputName });
 
     const previewUrl = `${getPublicBaseUrl(req)}/pal-video/${encodeURIComponent(outputName)}`;
     const nextStatus = job.status === '承認済' ? job.status : '確認中';

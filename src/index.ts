@@ -55,11 +55,13 @@ if (!process.env.POSTGRES_URL) {
 const app = express();
 const port = Number(process.env.PORT || 3100);
 const corsOrigin = process.env.CORS_ORIGIN || '*';
+const normalizeOrigin = (value: string) => value.trim().replace(/\/$/, '');
+
 const corsOriginList = corsOrigin === '*'
   ? '*'
   : corsOrigin
       .split(',')
-      .map((origin) => origin.trim())
+      .map((origin) => normalizeOrigin(origin))
       .filter(Boolean);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -86,8 +88,9 @@ app.use(cors({
       callback(null, true);
       return;
     }
-    if (Array.isArray(corsOriginList) && corsOriginList.includes(origin)) {
-      callback(null, origin);
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (Array.isArray(corsOriginList) && corsOriginList.includes(normalizedOrigin)) {
+      callback(null, normalizedOrigin);
       return;
     }
     callback(new Error('CORS not allowed'), false);

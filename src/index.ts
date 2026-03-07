@@ -667,7 +667,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
         : null;
       const baseFilters: string[] = [];
       if (imagePath) {
-        baseFilters.push(`scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=cover`);
+        baseFilters.push(`scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=increase`);
         baseFilters.push(`crop=${resolution.width}:${resolution.height}`);
       }
       baseFilters.push('format=yuv420p');

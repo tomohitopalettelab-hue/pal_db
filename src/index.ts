@@ -725,10 +725,10 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
       const transitionSec = 0.4;
       const inputArgs = sceneFiles.flatMap((file) => ['-i', file]);
       let filter = '';
-      let currentLabel = '[v0]';
+      let currentLabel = '[0:v]';
       let timeline = sceneDurations[0];
       for (let i = 0; i < sceneFiles.length - 1; i += 1) {
-        const nextLabel = `[v${i + 1}]`;
+        const nextLabel = `[${i + 1}:v]`;
         const outputLabel = `[vxf${i + 1}]`;
         const offset = Math.max(timeline - transitionSec, 0);
         filter += `${currentLabel}${nextLabel}xfade=transition=fade:duration=${transitionSec}:offset=${offset}${outputLabel};`;

@@ -605,12 +605,12 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
 
     const tempDir = path.join(tmpdir(), 'pal-video');
     await fs.mkdir(tempDir, { recursive: true });
-    const templates = new Map([
+    const templates = new Map<string, { label: string; durationSec: number; scenes: number }>([
       ['modern_15', { label: 'Modern: シンプル & クリーン', durationSec: 15, scenes: 4 }],
       ['pop_15', { label: 'Pop: 元気 & 親しみ', durationSec: 15, scenes: 4 }],
       ['corporate_30', { label: 'Corporate: 信頼と実績', durationSec: 30, scenes: 7 }],
       ['elegant_30', { label: 'Elegant: ラグジュアリー', durationSec: 30, scenes: 7 }],
-    ] as const);
+    ]);
 
     const resolvedTemplate = templates.get(templateId) || templates.get('modern_15')!;
     const durationSec = Math.min(Number(payload?.durationSec || resolvedTemplate.durationSec) || resolvedTemplate.durationSec, resolvedTemplate.durationSec);

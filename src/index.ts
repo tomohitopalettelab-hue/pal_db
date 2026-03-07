@@ -238,6 +238,9 @@ const resolveFontFile = () => {
 
 const FONT_FILE = resolveFontFile();
 const FONT_FAMILY = 'Noto Sans CJK JP';
+const CREATOMATE_API_URL = 'https://api.creatomate.com/v2/renders';
+const CREATOMATE_API_KEY = String(process.env.CREATOMATE_API_KEY || '').trim();
+const CREATOMATE_TEMPLATE_ID = String(process.env.CREATOMATE_TEMPLATE_ID || '').trim();
 
 const escapeFfmpegExpr = (expr: string) => expr.replace(/,/g, '\\,');
 
@@ -282,6 +285,75 @@ const buildDrawtextFilters = (
     );
   }
   return filters;
+};
+
+const buildCreatomateFallbackPlan = (payload: Record<string, unknown>) => {
+  const cuts = Array.isArray(payload?.cuts) ? payload.cuts : [];
+  const durationSec = Number(payload?.durationSec || 30);
+  const sceneCount = cuts.length > 0 ? cuts.length : Math.max(1, Math.min(7, Math.round(durationSec / 4)));
+  const baseDuration = Math.max(2, Math.round(durationSec / sceneCount));
+  const safeCuts = cuts.length > 0
+    ? cuts
+    : Array.from({ length: sceneCount }).map((_, index) => ({
+        durationSec: baseDuration,
+        imageUrl: (payload?.imageUrls as string[] | undefined)?.[index] || (payload?.imageUrls as string[] | undefined)?.[0] || '',
+        textMain: index === 0 ? payload?.telopMain : `ポイント${index + 1}`,
+        textSub: index === 0 ? payload?.telopSub : '',
+        textAnimation: 'slide',
+        textTransition: 'fade',
+      }));
+
+  return {
+    templateId: CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1',
+    templateMode: 'fixed',
+    scenes: safeCuts.map((cut: any) => ({
+      durationSec: Number(cut.durationSec || baseDuration),
+      imageUrl: String(cut.imageUrl || ''),
+      title: String(cut.textMain || payload?.telopMain || ''),
+      subtitle: String(cut.textSub || payload?.telopSub || ''),
+      textAnimation: String(cut.textAnimation || 'slide'),
+      textTransition: String(cut.textTransition || 'fade'),
+    })),
+    style: {
+      primaryColor: String(payload?.colorPrimary || '#E95464'),
+      accentColor: String(payload?.colorAccent || '#1c9a8b'),
+      font: 'NotoSansJP',
+    },
+    audio: { bgm: String(payload?.bgm || '') },
+    dynamicTemplateCandidates: [],
+  };
+};
+
+const buildCreatomateModifications = (plan: Record<string, unknown>) => {
+  const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
+  const style = (plan?.style || {}) as Record<string, unknown>;
+  const audio = (plan?.audio || {}) as Record<string, unknown>;
+  const modifications: Array<{ id: string; source?: string; text?: string; color?: string; value?: string }> = [];
+
+  scenes.slice(0, 7).forEach((scene: any, index: number) => {
+    const slot = String(index + 1).padStart(2, '0');
+    const bg = String(scene?.imageUrl || '').trim();
+    const title = String(scene?.title || '').trim();
+    const sub = String(scene?.subtitle || '').trim();
+    if (bg) modifications.push({ id: `scene_${slot}_bg`, source: bg });
+    if (title) modifications.push({ id: `scene_${slot}_title`, text: title });
+    if (sub) modifications.push({ id: `scene_${slot}_sub`, text: sub });
+    if (scene?.durationSec) {
+      modifications.push({ id: `scene_${slot}_duration`, value: String(scene.durationSec) });
+    }
+  });
+
+  const primary = String(style?.primaryColor || '').trim();
+  const accent = String(style?.accentColor || '').trim();
+  if (primary) modifications.push({ id: 'accent_primary', color: primary });
+  if (accent) modifications.push({ id: 'accent_secondary', color: accent });
+
+  const bgm = String(audio?.bgm || '').trim();
+  if (bgm.startsWith('http')) {
+    modifications.push({ id: 'bgm_track', source: bgm });
+  }
+
+  return modifications;
 };
 
 app.get('/admin', (_req: Request, res: Response) => {
@@ -854,6 +926,70 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[pal-db] pal-video generate failed', error);
     const message = error instanceof Error ? error.message : 'failed to generate pal_video';
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/pal-video/render', async (req: Request, res: Response) => {
+  try {
+    if (!CREATOMATE_API_KEY) {
+      return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
+    }
+    const jobId = String(req.body?.jobId || '').trim();
+    if (!jobId) return res.status(400).json({ success: false, error: 'jobId is required' });
+
+    const job = await getPalVideoJob(jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'job not found' });
+
+    const payload = (job.payload || {}) as Record<string, unknown>;
+    const plan = (payload?.creatomatePlan as Record<string, unknown> | undefined) || buildCreatomateFallbackPlan(payload);
+    const templateId = String(plan?.templateId || CREATOMATE_TEMPLATE_ID || '').trim();
+    if (!templateId) {
+      return res.status(500).json({ success: false, error: 'CREATOMATE_TEMPLATE_ID is missing' });
+    }
+
+    const modifications = buildCreatomateModifications(plan);
+    const response = await fetch(CREATOMATE_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${CREATOMATE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        template_id: templateId,
+        modifications,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return res.status(502).json({ success: false, error: data?.error || 'creatomate render failed' });
+    }
+
+    const renderItem = Array.isArray(data) ? data[0] : data?.render || data;
+    const renderId = String(renderItem?.id || renderItem?.render_id || '').trim();
+    const previewUrl = String(renderItem?.url || '').trim() || null;
+    const nextStatus = job.status === '承認済' ? job.status : '確認中';
+
+    const updated = await upsertPalVideoJob({
+      id: job.id,
+      paletteId: job.paletteId,
+      planCode: job.planCode,
+      status: nextStatus,
+      payload: {
+        ...payload,
+        creatomatePlan: plan,
+        creatomateTemplateId: templateId,
+        creatomateRenderId: renderId,
+      },
+      previewUrl,
+      youtubeUrl: job.youtubeUrl,
+    });
+
+    return res.json({ success: true, job: updated, renderId, previewUrl });
+  } catch (error) {
+    console.error('[pal-db] pal-video render failed', error);
+    const message = error instanceof Error ? error.message : 'failed to render pal_video';
     return res.status(500).json({ success: false, error: message });
   }
 });

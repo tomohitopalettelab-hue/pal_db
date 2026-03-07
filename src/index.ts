@@ -594,6 +594,8 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     const args = imagePath
       ? [
           '-y',
+          '-hide_banner',
+          '-loglevel', 'error',
           '-loop', '1',
           '-i', imagePath,
           '-t', String(durationSec),
@@ -603,6 +605,8 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
         ]
       : [
           '-y',
+          '-hide_banner',
+          '-loglevel', 'error',
           '-f', 'lavfi',
           '-i', `color=c=${colorPrimary}:s=${resolution.width}x${resolution.height}:d=${durationSec}`,
           '-vf', vf,

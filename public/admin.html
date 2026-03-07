@@ -157,6 +157,11 @@
     
     code { background: var(--accent-blue); color: var(--primary); padding: 2px 6px; border-radius: 4px; font-weight: 600; }
 
+    .media-preview img { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; border: 1px solid var(--border); }
+    .media-placeholder { width: 48px; height: 48px; border-radius: 10px; border: 1px dashed #94a3b8; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: #64748b; background: #f8fafc; }
+    .media-url { display: inline-flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .media-url a { color: var(--primary); text-decoration: none; font-weight: 700; font-size: 0.8rem; }
+
     .toast-region {
       position: fixed;
       top: 1rem;
@@ -218,6 +223,7 @@
     <div class="tabs-shell" id="adminTabs">
       <button class="tab-button" type="button" data-tab-target="customer">顧客情報</button>
       <button class="tab-button" type="button" data-tab-target="plan">プラン管理</button>
+      <button class="tab-button" type="button" data-tab-target="media">アップロード済みメディア</button>
       <button class="tab-button" type="button" data-tab-target="service-form">サービス詳細</button>
       <button class="tab-button" type="button" data-tab-target="settings">選択肢設定</button>
       <button class="tab-button" type="button" data-tab-target="service-list">サービス一覧</button>
@@ -324,6 +330,16 @@
       </div>
     </section>
 
+    <section class="card section-service tab-panel" data-tab-panel="media">
+      <div class="card-header">
+        <h2>アップロード済みメディア</h2>
+        <span class="muted" id="mediaCount">- 件</span>
+      </div>
+      <div class="table-container">
+        <table id="mediaTable"></table>
+      </div>
+    </section>
+
     <section class="card section-service tab-panel" data-tab-panel="settings">
       <div class="card-header" style="border-top: 1px solid var(--border);">
         <h2>フェーズ / ステータス設定</h2>
@@ -416,6 +432,7 @@
     let accountStatusOptions = [];
     let editingContractId = null;
     let activeAdminTab = 'customer';
+    let mediaAssets = [];
 
     function showToast({ title, message, type = 'info', duration = 4200, actions = [] }) {
       const region = document.getElementById('toastRegion');
@@ -513,6 +530,13 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;');
+
+    const formatBytes = (bytes) => {
+      if (!bytes || bytes <= 0) return '-';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      const idx = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      return `${(bytes / Math.pow(1024, idx)).toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+    };
 
     function renderServiceNav() {
       const nav = document.getElementById('service-nav');
@@ -710,6 +734,103 @@
         }).join('');
     }
 
+    function renderMediaTable() {
+      const table = document.getElementById('mediaTable');
+      if (!mediaAssets.length) {
+        table.innerHTML = `
+          <tr>
+            <th>プレビュー</th><th>ファイル</th><th>種別</th><th>サイズ</th><th>作成日</th><th>URL</th><th>操作</th>
+          </tr>
+          <tr>
+            <td colspan="7" class="muted">メディアがありません</td>
+          </tr>
+        `;
+        document.getElementById('mediaCount').textContent = '0 件';
+        return;
+      }
+
+      document.getElementById('mediaCount').textContent = `${mediaAssets.length} 件`;
+      table.innerHTML = `
+        <tr>
+          <th>プレビュー</th><th>ファイル</th><th>種別</th><th>サイズ</th><th>作成日</th><th>URL</th><th>操作</th>
+        </tr>
+      ` + mediaAssets.map(asset => {
+        const preview = asset.mimeType && asset.mimeType.startsWith('image/')
+          ? `<img src="${asset.url}" alt="${escapeHtml(asset.originalName || asset.fileName)}" />`
+          : `<div class="media-placeholder">FILE</div>`;
+
+        return `
+          <tr>
+            <td class="media-preview">${preview}</td>
+            <td>${escapeHtml(asset.originalName || asset.fileName)}</td>
+            <td>${escapeHtml(asset.mimeType || '-')}</td>
+            <td>${formatBytes(asset.sizeBytes)}</td>
+            <td>${new Date(asset.createdAt).toLocaleString()}</td>
+            <td>
+              <div class="media-url">
+                <a href="${asset.url}" target="_blank" rel="noreferrer">開く</a>
+                <button class="btn-refresh" style="padding:4px 8px; font-size:12px;" onclick="copyMediaUrl('${asset.url}')">URLをコピー</button>
+              </div>
+            </td>
+            <td>
+              <button class="btn-delete" style="padding:4px 8px; font-size:12px;" onclick="deleteMedia('${asset.id}')">削除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadMediaAssets() {
+      if (!account?.paletteId) {
+        mediaAssets = [];
+        renderMediaTable();
+        return;
+      }
+
+      try {
+        const res = await j(`/api/media?paletteId=${encodeURIComponent(account.paletteId)}`);
+        mediaAssets = Array.isArray(res.assets) ? res.assets : [];
+        renderMediaTable();
+      } catch (error) {
+        notifyError(error.message || 'メディアの読み込みに失敗しました');
+      }
+    }
+
+    async function deleteMedia(id) {
+      const ok = await toastConfirm('このメディアを削除しますか？', { confirmLabel: '削除' });
+      if (!ok) return;
+      try {
+        await j(`/api/media/${id}`, { method: 'DELETE' });
+        showToast({ type: 'success', title: '削除しました' });
+        loadMediaAssets();
+      } catch (error) {
+        notifyError(error.message || '削除に失敗しました');
+      }
+    }
+
+    function copyMediaUrl(url) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url)
+          .then(() => showToast({ type: 'success', title: 'URLをコピーしました' }))
+          .catch(() => notifyError('コピーに失敗しました'));
+        return;
+      }
+
+      const temp = document.createElement('input');
+      temp.value = url;
+      document.body.appendChild(temp);
+      temp.select();
+      try {
+        const ok = document.execCommand('copy');
+        if (ok) showToast({ type: 'success', title: 'URLをコピーしました' });
+        else notifyError('コピーに失敗しました');
+      } catch (error) {
+        notifyError('コピーに失敗しました');
+      } finally {
+        temp.remove();
+      }
+    }
+
     function resetContractForm() {
       editingContractId = null;
       document.getElementById('ctrId').value = '';
@@ -797,6 +918,8 @@
         const ctrRes = await j(`/api/contracts?accountId=${encodeURIComponent(account.id)}`);
         contracts = Array.isArray(ctrRes.contracts) ? ctrRes.contracts : [];
         renderContracts();
+
+        await loadMediaAssets();
 
         if (editingContractId) {
           const exists = contracts.some(item => item.id === editingContractId);

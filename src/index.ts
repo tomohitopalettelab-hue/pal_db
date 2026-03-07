@@ -93,7 +93,8 @@ app.use(cors({
       callback(null, normalizedOrigin);
       return;
     }
-    callback(new Error('CORS not allowed'), false);
+    console.warn('[pal-db] blocked CORS origin:', normalizedOrigin);
+    callback(null, false);
   },
 }));
 app.use(express.json({ limit: '2mb' }));

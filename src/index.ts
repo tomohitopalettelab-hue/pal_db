@@ -2,7 +2,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import type { Request, Response } from 'express';
+import multer from 'multer';
 import path from 'path';
+import { spawn } from 'child_process';
+import { existsSync, mkdirSync, unlinkSync } from 'fs';
+import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import {
   deleteAccountStatusOption,
@@ -11,17 +16,22 @@ import {
   deleteContractOption,
   deletePlan,
   deleteServiceSubscription,
+  deleteMediaAsset,
   ensureTables,
+  createMediaAsset,
   getPaletteServices,
   getPaletteSummary,
   hasChatLoginId,
+  getMediaAssetById,
   listAccountStatusOptions,
   listAccounts,
   listContracts,
   listContractOptions,
+  listMediaAssets,
   listPlans,
   listPalVideoJobs,
   listServiceSubscriptions,
+  getPalVideoJob,
   upsertAccountStatusOption,
   upsertAccount,
   upsertContract,
@@ -30,7 +40,6 @@ import {
   upsertPalVideoJob,
   upsertServiceSubscription,
   verifyChatLogin,
-  getPalVideoJob,
 } from './store.js';
 
 dotenv.config();
@@ -55,6 +64,19 @@ const corsOriginList = corsOrigin === '*'
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
+const PALETTE_ID_REGEX = /^[A-Z][0-9]{4}$/;
+const mediaRootDir = path.join(publicDir, 'media');
+const mediaUploadMaxMb = Number(process.env.MEDIA_UPLOAD_MAX_MB || 12);
+const mediaUploadMaxBytes = Math.max(mediaUploadMaxMb, 1) * 1024 * 1024;
+const allowedMediaMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'video/mp4',
+  'video/quicktime',
+]);
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -71,6 +93,133 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(publicDir));
+
+const normalizePaletteIdInput = (raw: unknown): string => {
+  const value = String(raw || '').trim().toUpperCase();
+  if (!PALETTE_ID_REGEX.test(value)) {
+    throw new Error('paletteId must be 1 alphabet letter + 4 digits (例: A0001)');
+  }
+  return value;
+};
+
+const mediaStorage = multer.diskStorage({
+  destination: (req, _file, cb) => {
+    try {
+      const paletteId = normalizePaletteIdInput(req.body?.paletteId || req.query?.paletteId);
+      const targetDir = path.join(mediaRootDir, paletteId);
+      if (!existsSync(targetDir)) {
+        mkdirSync(targetDir, { recursive: true });
+      }
+      cb(null, targetDir);
+    } catch (error) {
+      cb(error as Error, mediaRootDir);
+    }
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const safeExt = ext && ext.length <= 10 ? ext : '';
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    cb(null, `${unique}${safeExt}`);
+  },
+});
+
+const uploadMedia = multer({
+  storage: mediaStorage,
+  limits: { fileSize: mediaUploadMaxBytes },
+  fileFilter: (_req, file, cb) => {
+    const type = String(file.mimetype || '').toLowerCase();
+    if (allowedMediaMimeTypes.has(type) || type.startsWith('image/') || type.startsWith('video/')) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error('unsupported media type'));
+  },
+});
+
+const uploadSingleMedia = (req: Request, res: Response, next: () => void) => {
+  uploadMedia.single('file')(req, res, (err) => {
+    if (err) {
+      const message = err instanceof Error ? err.message : 'upload failed';
+      res.status(400).json({ success: false, error: message });
+      return;
+    }
+    next();
+  });
+};
+
+const getPublicBaseUrl = (req: Request): string => {
+  const configured = process.env.PAL_DB_PUBLIC_BASE_URL?.trim();
+  if (configured) return configured.replace(/\/$/, '');
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = forwardedProto || req.protocol;
+  const host = req.get('host');
+  return host ? `${proto}://${host}` : '';
+};
+
+const parseResolution = (raw?: string | null) => {
+  const match = String(raw || '').match(/(\d+)\s*x\s*(\d+)/i);
+  const width = match ? Number(match[1]) : 1080;
+  const height = match ? Number(match[2]) : 1920;
+  return {
+    width: Number.isFinite(width) ? width : 1080,
+    height: Number.isFinite(height) ? height : 1920,
+  };
+};
+
+const escapeDrawtext = (raw: string) => {
+  return String(raw || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/:/g, '\\:')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n');
+};
+
+const runFfmpeg = async (args: string[]) => {
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (data) => {
+      stderr += String(data || '');
+    });
+    proc.on('error', (error) => reject(error));
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr || `ffmpeg exited with ${code}`));
+    });
+  });
+};
+
+const downloadImage = async (url: string, dir: string): Promise<string | null> => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') || '';
+    const extension = contentType.includes('png') ? 'png' : 'jpg';
+    const name = `pal-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
+    const filePath = path.join(dir, name);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(filePath, buffer);
+    return filePath;
+  } catch (error) {
+    console.error('[pal-db] image download failed', error);
+    return null;
+  }
+};
+
+const buildDrawtextFilters = (mainText: string, subText: string) => {
+  const filters: string[] = [];
+  if (mainText) {
+    filters.push(
+      `drawtext=text='${escapeDrawtext(mainText)}':x=(w-text_w)/2:y=h*0.66:fontsize=h*0.06:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=16`,
+    );
+  }
+  if (subText) {
+    filters.push(
+      `drawtext=text='${escapeDrawtext(subText)}':x=(w-text_w)/2:y=h*0.76:fontsize=h*0.035:fontcolor=white:box=1:boxcolor=black@0.3:boxborderw=12`,
+    );
+  }
+  return filters;
+};
 
 app.get('/admin', (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, 'customers.html'));
@@ -292,6 +441,67 @@ app.get('/api/service-subscriptions', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/media', async (req: Request, res: Response) => {
+  try {
+    const paletteId = normalizePaletteIdInput(req.query.paletteId);
+    const assets = await listMediaAssets(paletteId);
+    return res.json({ success: true, assets });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'failed to list media';
+    return res.status(400).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/media/upload', uploadSingleMedia, async (req: Request, res: Response) => {
+  try {
+    const paletteId = normalizePaletteIdInput(req.body?.paletteId || req.query?.paletteId);
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file) {
+      return res.status(400).json({ success: false, error: 'file is required' });
+    }
+
+    const url = `${getPublicBaseUrl(req)}/media/${encodeURIComponent(paletteId)}/${encodeURIComponent(file.filename)}`;
+    const asset = await createMediaAsset({
+      paletteId,
+      fileName: file.filename,
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+      url,
+    });
+
+    return res.json({ success: true, asset });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'failed to upload media';
+    return res.status(400).json({ success: false, error: message });
+  }
+});
+
+app.delete('/api/media/:id', async (req: Request, res: Response) => {
+  try {
+    const assetId = String(req.params.id || '').trim();
+    if (!assetId) return res.status(400).json({ success: false, error: 'id is required' });
+
+    const asset = await getMediaAssetById(assetId);
+    if (!asset) return res.status(404).json({ success: false, error: 'media not found' });
+
+    const filePath = path.join(mediaRootDir, asset.paletteId, asset.fileName);
+    if (existsSync(filePath)) {
+      try {
+        unlinkSync(filePath);
+      } catch (error) {
+        console.warn('[pal-db] failed to remove media file', error);
+      }
+    }
+
+    await deleteMediaAsset(assetId);
+    return res.json({ success: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'failed to delete media';
+    return res.status(400).json({ success: false, error: message });
+  }
+});
+
 app.get('/api/pal-video/jobs', async (req: Request, res: Response) => {
   try {
     const paletteId = String(req.query.paletteId || '').trim() || undefined;
@@ -325,6 +535,83 @@ app.post('/api/pal-video/jobs', async (req: Request, res: Response) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'failed to save pal_video job';
     return res.status(400).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
+  try {
+    const jobId = String(req.body?.jobId || '').trim();
+    if (!jobId) return res.status(400).json({ success: false, error: 'jobId is required' });
+
+    const job = await getPalVideoJob(jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'job not found' });
+
+    const payload = (job.payload || {}) as Record<string, unknown>;
+    const resolution = parseResolution(String(payload?.resolution || '1080x1920'));
+    const durationSec = Number(payload?.durationSec || 30) || 30;
+    const mainText = String(payload?.telopMain || '').trim();
+    const subText = String(payload?.telopSub || '').trim();
+    const colorPrimary = String(payload?.colorPrimary || '#E95464').trim() || '#E95464';
+    const imageUrls = Array.isArray(payload?.imageUrls) ? payload.imageUrls : [];
+
+    const outputDir = path.join(publicDir, 'pal-video');
+    await fs.mkdir(outputDir, { recursive: true });
+    const outputName = `${jobId}.mp4`;
+    const outputPath = path.join(outputDir, outputName);
+
+    const tempDir = path.join(tmpdir(), 'pal-video');
+    await fs.mkdir(tempDir, { recursive: true });
+    const imagePath = imageUrls.length > 0
+      ? await downloadImage(String(imageUrls[0]), tempDir)
+      : null;
+
+    const baseFilters: string[] = [];
+    if (imagePath) {
+      baseFilters.push(`scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=cover`);
+      baseFilters.push(`crop=${resolution.width}:${resolution.height}`);
+    }
+    baseFilters.push('format=yuv420p');
+    const drawtextFilters = buildDrawtextFilters(mainText, subText);
+    const vf = [...baseFilters, ...drawtextFilters].join(',');
+
+    const args = imagePath
+      ? [
+          '-y',
+          '-loop', '1',
+          '-i', imagePath,
+          '-t', String(durationSec),
+          '-vf', vf,
+          '-r', '30',
+          outputPath,
+        ]
+      : [
+          '-y',
+          '-f', 'lavfi',
+          '-i', `color=c=${colorPrimary}:s=${resolution.width}x${resolution.height}:d=${durationSec}`,
+          '-vf', vf,
+          '-r', '30',
+          outputPath,
+        ];
+
+    await runFfmpeg(args);
+
+    const previewUrl = `${getPublicBaseUrl(req)}/pal-video/${encodeURIComponent(outputName)}`;
+    const nextStatus = job.status === '承認済' ? job.status : '確認中';
+    const updated = await upsertPalVideoJob({
+      id: job.id,
+      paletteId: job.paletteId,
+      planCode: job.planCode,
+      status: nextStatus,
+      payload: job.payload,
+      previewUrl,
+      youtubeUrl: job.youtubeUrl,
+    });
+
+    return res.json({ success: true, job: updated });
+  } catch (error) {
+    console.error('[pal-db] pal-video generate failed', error);
+    const message = error instanceof Error ? error.message : 'failed to generate pal_video';
+    return res.status(500).json({ success: false, error: message });
   }
 });
 

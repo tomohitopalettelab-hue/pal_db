@@ -93,6 +93,17 @@ export type PalVideoJobRecord = {
   updatedAt: string;
 };
 
+export type MediaAssetRecord = {
+  id: string;
+  paletteId: string;
+  fileName: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  url: string;
+  createdAt: string;
+};
+
 type Row = Record<string, unknown>;
 
 let initialized = false;
@@ -292,6 +303,17 @@ const normalizePalVideoJob = (row: Row): PalVideoJobRecord => ({
   youtubeUrl: asNullableString(row.youtube_url),
   createdAt: toIso(row.created_at),
   updatedAt: toIso(row.updated_at),
+});
+
+const normalizeMediaAsset = (row: Row): MediaAssetRecord => ({
+  id: asString(row.id),
+  paletteId: asString(row.palette_id),
+  fileName: asString(row.file_name),
+  originalName: asString(row.original_name),
+  mimeType: asString(row.mime_type),
+  sizeBytes: asNumber(row.size_bytes, 0),
+  url: asString(row.url),
+  createdAt: toIso(row.created_at),
 });
 
 const normalizeAccountStatusOption = (row: Row): AccountStatusOptionRecord => ({
@@ -508,6 +530,19 @@ export const ensureTables = async () => {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS media_assets (
+      id TEXT PRIMARY KEY,
+      palette_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      original_name TEXT NOT NULL DEFAULT '',
+      mime_type TEXT NOT NULL DEFAULT '',
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      url TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS account_status_options (
       id TEXT PRIMARY KEY,
       value TEXT NOT NULL UNIQUE,
@@ -529,6 +564,8 @@ export const ensureTables = async () => {
   await sql`CREATE INDEX IF NOT EXISTS pal_video_jobs_palette_id_idx ON pal_video_jobs (palette_id)`;
   await sql`CREATE INDEX IF NOT EXISTS pal_video_jobs_status_idx ON pal_video_jobs (status)`;
   await sql`CREATE INDEX IF NOT EXISTS pal_video_jobs_updated_at_idx ON pal_video_jobs (updated_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS media_assets_palette_id_idx ON media_assets (palette_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS media_assets_created_at_idx ON media_assets (created_at)`;
   await sql`CREATE INDEX IF NOT EXISTS contract_options_type_active_idx ON contract_options (option_type, is_active, sort_order, updated_at)`;
   await sql`CREATE INDEX IF NOT EXISTS account_status_options_active_idx ON account_status_options (is_active, sort_order, updated_at)`;
 
@@ -1149,6 +1186,73 @@ export const getPalVideoJob = async (id: string): Promise<PalVideoJobRecord | nu
   `;
   if (!result.rows?.[0]) return null;
   return normalizePalVideoJob(result.rows[0] as Row);
+};
+
+export const listMediaAssets = async (paletteId: string): Promise<MediaAssetRecord[]> => {
+  await ensureTables();
+  const normalizedPaletteId = normalizePaletteId(paletteId);
+  const result = await sql`
+    SELECT id, palette_id, file_name, original_name, mime_type, size_bytes, url, created_at
+    FROM media_assets
+    WHERE palette_id = ${normalizedPaletteId}
+    ORDER BY created_at DESC
+  `;
+  return result.rows.map((row: unknown) => normalizeMediaAsset(row as Row));
+};
+
+export const getMediaAssetById = async (id: string): Promise<MediaAssetRecord | null> => {
+  await ensureTables();
+  const assetId = asString(id).trim();
+  if (!assetId) return null;
+  const result = await sql`
+    SELECT id, palette_id, file_name, original_name, mime_type, size_bytes, url, created_at
+    FROM media_assets
+    WHERE id = ${assetId}
+    LIMIT 1
+  `;
+  if (!result.rows?.[0]) return null;
+  return normalizeMediaAsset(result.rows[0] as Row);
+};
+
+export const createMediaAsset = async (input: {
+  paletteId: string;
+  fileName: string;
+  originalName?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+  url: string;
+}): Promise<MediaAssetRecord> => {
+  await ensureTables();
+
+  const paletteId = normalizePaletteId(input.paletteId);
+  const id = generateId('media');
+  const fileName = asString(input.fileName).trim();
+  const originalName = asString(input.originalName, '');
+  const mimeType = asString(input.mimeType, '');
+  const sizeBytes = asNumber(input.sizeBytes, 0);
+  const url = asString(input.url).trim();
+
+  if (!fileName) {
+    throw new Error('fileName is required');
+  }
+  if (!url) {
+    throw new Error('url is required');
+  }
+
+  const result = await sql`
+    INSERT INTO media_assets (id, palette_id, file_name, original_name, mime_type, size_bytes, url)
+    VALUES (${id}, ${paletteId}, ${fileName}, ${originalName}, ${mimeType}, ${sizeBytes}, ${url})
+    RETURNING id, palette_id, file_name, original_name, mime_type, size_bytes, url, created_at
+  `;
+
+  return normalizeMediaAsset(result.rows[0] as Row);
+};
+
+export const deleteMediaAsset = async (id: string): Promise<void> => {
+  await ensureTables();
+  const assetId = asString(id).trim();
+  if (!assetId) return;
+  await sql`DELETE FROM media_assets WHERE id = ${assetId}`;
 };
 
 export const upsertPalVideoJob = async (

@@ -46,11 +46,17 @@ if (!process.env.POSTGRES_URL) {
 const app = express();
 const port = Number(process.env.PORT || 3100);
 const corsOrigin = process.env.CORS_ORIGIN || '*';
+const corsOriginList = corsOrigin === '*'
+  ? '*'
+  : corsOrigin
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
 
-app.use(cors({ origin: corsOrigin === '*' ? true : corsOrigin }));
+app.use(cors({ origin: corsOriginList === '*' ? true : corsOriginList }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(publicDir));
 

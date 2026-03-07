@@ -224,19 +224,26 @@ const downloadImage = async (url: string, dir: string): Promise<string | null> =
 
 const resolveFontFile = () => {
   const candidates = [
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+    process.env.PAL_VIDEO_FONT_FILE?.trim(),
     '/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf',
+    '/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf',
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKjp-Regular.otf',
+    '/usr/share/fonts/truetype/noto/NotoSansJP-Regular.otf',
     '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-  ];
+  ].filter(Boolean) as string[];
   const found = candidates.find((candidate) => existsSync(candidate));
   return found || '';
 };
 
 const FONT_FILE = resolveFontFile();
+const FONT_FAMILY = 'Noto Sans CJK JP';
 
 const buildDrawtextFilters = (mainText: string, subText: string) => {
   const filters: string[] = [];
-  const fontPart = FONT_FILE ? `:fontfile=${FONT_FILE}` : '';
+  const fontPart = FONT_FILE
+    ? `:fontfile=${FONT_FILE}`
+    : `:font=${FONT_FAMILY}`;
   if (mainText) {
     filters.push(
       `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.66:fontsize=h*0.06:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=16`,
@@ -643,6 +650,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
       templateId: resolvedTemplate.label,
       sceneCount,
       hasImage: imageUrls.length > 0,
+      fontFile: FONT_FILE || null,
     });
 
     const downloadedImages: (string | null)[] = [];

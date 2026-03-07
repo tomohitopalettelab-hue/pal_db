@@ -65,7 +65,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
 const PALETTE_ID_REGEX = /^[A-Z][0-9]{4}$/;
-const mediaRootDir = path.join(publicDir, 'media');
+const mediaRootDir = process.env.PAL_DB_MEDIA_DIR
+  ? path.resolve(process.env.PAL_DB_MEDIA_DIR)
+  : path.join(publicDir, 'media');
 const mediaUploadMaxMb = Number(process.env.MEDIA_UPLOAD_MAX_MB || 12);
 const mediaUploadMaxBytes = Math.max(mediaUploadMaxMb, 1) * 1024 * 1024;
 const allowedMediaMimeTypes = new Set([
@@ -93,6 +95,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(publicDir));
+app.use('/media', express.static(mediaRootDir));
 
 const normalizePaletteIdInput = (raw: unknown): string => {
   const value = String(raw || '').trim().toUpperCase();

@@ -606,7 +606,15 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
     const payload = (job.payload || {}) as Record<string, unknown>;
-    const resolution = parseResolution(String(payload?.resolution || '1080x1920'));
+    const rawResolution = parseResolution(String(payload?.resolution || '1080x1920'));
+    const maxPreviewWidth = 720;
+    const scaleRatio = rawResolution.width > maxPreviewWidth
+      ? maxPreviewWidth / rawResolution.width
+      : 1;
+    const resolution = {
+      width: Math.round(rawResolution.width * scaleRatio),
+      height: Math.round(rawResolution.height * scaleRatio),
+    };
     const mainText = String(payload?.telopMain || '').trim();
     const subText = String(payload?.telopSub || '').trim();
     const colorPrimary = String(payload?.colorPrimary || '#E95464').trim() || '#E95464';
@@ -693,7 +701,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
             '-i', imagePath,
             '-t', String(sceneDuration),
             '-vf', vf,
-            '-r', '30',
+            '-r', '24',
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-threads', '1',
@@ -707,7 +715,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
             '-f', 'lavfi',
             '-i', `color=c=${colorPrimary}:s=${resolution.width}x${resolution.height}:d=${sceneDuration}`,
             '-vf', vf,
-            '-r', '30',
+            '-r', '24',
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-threads', '1',

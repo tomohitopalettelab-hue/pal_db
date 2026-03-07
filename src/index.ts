@@ -545,6 +545,16 @@ app.post('/api/pal-video/jobs', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/pal-video/ffmpeg-check', async (_req: Request, res: Response) => {
+  try {
+    await runFfmpeg(['-version']);
+    return res.json({ success: true, installed: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'ffmpeg check failed';
+    return res.status(500).json({ success: false, installed: false, error: message });
+  }
+});
+
 app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
   try {
     const jobId = String(req.body?.jobId || '').trim();

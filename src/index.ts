@@ -239,19 +239,22 @@ const resolveFontFile = () => {
 const FONT_FILE = resolveFontFile();
 const FONT_FAMILY = 'Noto Sans CJK JP';
 
-const buildDrawtextFilters = (mainText: string, subText: string) => {
+const buildDrawtextFilters = (mainText: string, subText: string, durationSec: number) => {
   const filters: string[] = [];
   const fontPart = FONT_FILE
     ? `:fontfile=${FONT_FILE}`
     : `:font=${FONT_FAMILY}`;
+  const fadeIn = 0.35;
+  const fadeOut = 0.35;
+  const baseAlpha = `if(lt(t,${fadeIn}),t/${fadeIn},if(lt(t,${Math.max(durationSec - fadeOut, fadeIn)}),1,((${durationSec}-t)/${fadeOut})))`;
   if (mainText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.66:fontsize=h*0.06:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=16`,
+      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.64+if(lt(t,0.6),(0.6-t)*40,0):fontsize=h*0.06:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.35:boxborderw=16`,
     );
   }
   if (subText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.76:fontsize=h*0.035:fontcolor=white:box=1:boxcolor=black@0.3:boxborderw=12`,
+      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.75+if(lt(t,0.6),(0.6-t)*24,0):fontsize=h*0.035:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.3:boxborderw=12`,
     );
   }
   return filters;
@@ -671,7 +674,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
         baseFilters.push(`crop=${resolution.width}:${resolution.height}`);
       }
       baseFilters.push('format=yuv420p');
-      const drawtextFilters = buildDrawtextFilters(sceneTexts[i].main, sceneTexts[i].sub);
+      const drawtextFilters = buildDrawtextFilters(sceneTexts[i].main, sceneTexts[i].sub, sceneDuration);
       const vf = [...baseFilters, ...drawtextFilters].join(',');
       const sceneFile = path.join(tempDir, `scene-${jobId}-${i}.mp4`);
 
@@ -710,29 +713,31 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
       sceneFiles.push(sceneFile);
     }
 
-    const concatListPath = path.join(tempDir, `concat-${jobId}.txt`);
-    const concatBody = sceneFiles.map((file) => `file '${file.replace(/'/g, "'\\''")}'`).join('\n');
-    await fs.writeFile(concatListPath, concatBody, 'utf-8');
+    if (sceneFiles.length === 1) {
+      await fs.copyFile(sceneFiles[0], tempOutputPath);
+    } else {
+      const transitionSec = 0.4;
+      const inputArgs = sceneFiles.flatMap((file) => ['-i', file]);
+      let filter = '';
+      let currentLabel = '[v0]';
+      let timeline = sceneDurations[0];
+      for (let i = 0; i < sceneFiles.length - 1; i += 1) {
+        const nextLabel = `[v${i + 1}]`;
+        const outputLabel = `[vxf${i + 1}]`;
+        const offset = Math.max(timeline - transitionSec, 0);
+        filter += `${currentLabel}${nextLabel}xfade=transition=fade:duration=${transitionSec}:offset=${offset}${outputLabel};`;
+        currentLabel = outputLabel;
+        timeline += sceneDurations[i + 1] - transitionSec;
+      }
+      filter += `${currentLabel}format=yuv420p[vid]`;
 
-    try {
       await runFfmpeg([
         '-y',
         '-hide_banner',
         '-loglevel', 'error',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', concatListPath,
-        '-c', 'copy',
-        tempOutputPath,
-      ]);
-    } catch (error) {
-      await runFfmpeg([
-        '-y',
-        '-hide_banner',
-        '-loglevel', 'error',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', concatListPath,
+        ...inputArgs,
+        '-filter_complex', filter,
+        '-map', '[vid]',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-threads', '1',

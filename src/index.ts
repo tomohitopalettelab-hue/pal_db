@@ -241,26 +241,44 @@ const FONT_FAMILY = 'Noto Sans CJK JP';
 
 const escapeFfmpegExpr = (expr: string) => expr.replace(/,/g, '\\,');
 
-const buildDrawtextFilters = (mainText: string, subText: string, durationSec: number) => {
+const buildDrawtextFilters = (
+  mainText: string,
+  subText: string,
+  durationSec: number,
+  animation: string,
+  transition: string,
+) => {
   const filters: string[] = [];
   const fontPart = FONT_FILE
     ? `:fontfile=${FONT_FILE}`
     : `:font=${FONT_FAMILY}`;
   const fadeIn = 0.35;
   const fadeOut = 0.35;
-  const baseAlpha = escapeFfmpegExpr(
-    `if(lt(t,${fadeIn}),t/${fadeIn},if(lt(t,${Math.max(durationSec - fadeOut, fadeIn)}),1,((${durationSec}-t)/${fadeOut})))`,
-  );
-  const mainSlide = escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*40,0)');
-  const subSlide = escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*24,0)');
+  const safeAnimation = String(animation || '').toLowerCase();
+  const safeTransition = String(transition || '').toLowerCase();
+  const useFade = safeTransition !== 'none';
+  const useSlide = safeAnimation === 'slide';
+  const useFloat = safeAnimation === 'float';
+  const usePop = safeAnimation === 'pop';
+  const baseAlpha = useFade
+    ? escapeFfmpegExpr(
+        `if(lt(t,${fadeIn}),t/${fadeIn},if(lt(t,${Math.max(durationSec - fadeOut, fadeIn)}),1,((${durationSec}-t)/${fadeOut})))`,
+      )
+    : '1';
+  const mainSlide = useSlide ? escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*40,0)') : '0';
+  const subSlide = useSlide ? escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*24,0)') : '0';
+  const mainFloat = useFloat ? escapeFfmpegExpr('sin(t*2*PI/3)*6') : '0';
+  const subFloat = useFloat ? escapeFfmpegExpr('sin(t*2*PI/3)*4') : '0';
+  const mainFontScale = usePop ? escapeFfmpegExpr('1+0.06*exp(-t*6)') : '1';
+  const subFontScale = usePop ? escapeFfmpegExpr('1+0.04*exp(-t*6)') : '1';
   if (mainText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.64+${mainSlide}:fontsize=h*0.06:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.35:boxborderw=16`,
+      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.64+${mainSlide}+${mainFloat}:fontsize=h*0.06*${mainFontScale}:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.35:boxborderw=16`,
     );
   }
   if (subText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.75+${subSlide}:fontsize=h*0.035:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.3:boxborderw=12`,
+      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.75+${subSlide}+${subFloat}:fontsize=h*0.035*${subFontScale}:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.3:boxborderw=12`,
     );
   }
   return filters;
@@ -615,11 +633,30 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
       width: Math.round(rawResolution.width * scaleRatio),
       height: Math.round(rawResolution.height * scaleRatio),
     };
-    const mainText = String(payload?.telopMain || '').trim();
-    const subText = String(payload?.telopSub || '').trim();
     const colorPrimary = String(payload?.colorPrimary || '#E95464').trim() || '#E95464';
     const imageUrls = Array.isArray(payload?.imageUrls) ? payload.imageUrls : [];
     const templateId = String(payload?.templateId || '').trim();
+    const rawCuts = Array.isArray(payload?.cuts) ? payload.cuts : [];
+    const allowedTransitions = new Set(['fade', 'none']);
+    const normalizeTransition = (value: unknown) => {
+      const next = String(value || '').toLowerCase();
+      return allowedTransitions.has(next) ? next : 'fade';
+    };
+    const normalizeAnimation = (value: unknown) => {
+      const next = String(value || '').toLowerCase();
+      if (next === 'none' || next === 'fade' || next === 'slide' || next === 'float' || next === 'pop') return next;
+      return 'slide';
+    };
+    const cuts = rawCuts
+      .map((cut) => ({
+        durationSec: Math.max(1, Math.round(Number((cut as Record<string, unknown>)?.durationSec || 0) || 0)),
+        imageUrl: String((cut as Record<string, unknown>)?.imageUrl || '').trim(),
+        textMain: String((cut as Record<string, unknown>)?.textMain || '').trim(),
+        textSub: String((cut as Record<string, unknown>)?.textSub || '').trim(),
+        textTransition: normalizeTransition((cut as Record<string, unknown>)?.textTransition),
+        textAnimation: normalizeAnimation((cut as Record<string, unknown>)?.textAnimation),
+      }))
+      .filter((cut) => cut.durationSec > 0);
 
     const outputDir = path.join(publicDir, 'pal-video');
     await fs.mkdir(outputDir, { recursive: true });
@@ -637,28 +674,41 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     ]);
 
     const resolvedTemplate = templates.get(templateId) || templates.get('modern_15')!;
-    const durationSec = Math.min(Number(payload?.durationSec || resolvedTemplate.durationSec) || resolvedTemplate.durationSec, resolvedTemplate.durationSec);
-    const sceneCount = resolvedTemplate.scenes;
+    const hasCuts = cuts.length > 0;
+    const durationSec = hasCuts
+      ? cuts.reduce((sum, cut) => sum + cut.durationSec, 0)
+      : Math.min(Number(payload?.durationSec || resolvedTemplate.durationSec) || resolvedTemplate.durationSec, resolvedTemplate.durationSec);
+    const sceneCount = hasCuts ? cuts.length : resolvedTemplate.scenes;
     const baseSceneSeconds = Math.floor(durationSec / sceneCount);
     const remainder = durationSec - baseSceneSeconds * sceneCount;
-    const sceneDurations = Array.from({ length: sceneCount }).map((_, index) => baseSceneSeconds + (index < remainder ? 1 : 0));
+    const sceneDurations = hasCuts
+      ? cuts.map((cut) => cut.durationSec)
+      : Array.from({ length: sceneCount }).map((_, index) => baseSceneSeconds + (index < remainder ? 1 : 0));
 
     const hearingAnswers = Array.isArray(payload?.hearingAnswers) ? payload.hearingAnswers : [];
+    const hearingQueue = [...hearingAnswers];
     const pickAnswerText = () => {
-      const next = hearingAnswers.shift();
+      const next = hearingQueue.shift();
       return next?.a ? String(next.a) : '';
     };
     const purposeText = String(payload?.purpose || '用途未設定');
-    const telopMainText = mainText || 'テロップ未設定';
-    const telopSubText = subText || 'サブテロップ未設定';
+    const telopMainText = String(payload?.telopMain || '').trim() || 'テロップ未設定';
+    const telopSubText = String(payload?.telopSub || '').trim() || 'サブテロップ未設定';
 
-    const sceneTexts = Array.from({ length: sceneCount }).map((_, index) => {
+    const fallbackTexts = Array.from({ length: sceneCount }).map((_, index) => {
       if (index === 0) return { main: telopMainText, sub: telopSubText };
       if (index === sceneCount - 1) return { main: 'お問い合わせはこちら', sub: 'ご相談お待ちしています' };
       if (index === 1) return { main: `用途: ${purposeText}`, sub: '' };
       const answer = pickAnswerText();
       return { main: answer || `ポイント${index}`, sub: '' };
     });
+
+    const sceneTexts = hasCuts
+      ? cuts.map((cut, index) => ({
+          main: cut.textMain || fallbackTexts[index]?.main || '',
+          sub: cut.textSub || fallbackTexts[index]?.sub || '',
+        }))
+      : fallbackTexts;
 
     console.log('[pal-db] pal-video generate start', {
       jobId,
@@ -671,24 +721,44 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     });
 
     const downloadedImages: (string | null)[] = [];
-    for (const url of imageUrls) {
-      const downloaded = await downloadImage(String(url), tempDir);
-      if (downloaded) downloadedImages.push(downloaded);
+    if (hasCuts) {
+      for (const cut of cuts) {
+        const url = cut.imageUrl;
+        if (!url) {
+          downloadedImages.push(null);
+          continue;
+        }
+        const downloaded = await downloadImage(String(url), tempDir);
+        downloadedImages.push(downloaded);
+      }
+    } else {
+      for (const url of imageUrls) {
+        const downloaded = await downloadImage(String(url), tempDir);
+        if (downloaded) downloadedImages.push(downloaded);
+      }
     }
 
     const sceneFiles: string[] = [];
     for (let i = 0; i < sceneCount; i += 1) {
       const sceneDuration = sceneDurations[i];
-      const imagePath = downloadedImages.length > 0
-        ? downloadedImages[i % downloadedImages.length]
-        : null;
+      const imagePath = hasCuts
+        ? downloadedImages[i]
+        : (downloadedImages.length > 0 ? downloadedImages[i % downloadedImages.length] : null);
       const baseFilters: string[] = [];
       if (imagePath) {
         baseFilters.push(`scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=increase`);
         baseFilters.push(`crop=${resolution.width}:${resolution.height}`);
       }
       baseFilters.push('format=yuv420p');
-      const drawtextFilters = buildDrawtextFilters(sceneTexts[i].main, sceneTexts[i].sub, sceneDuration);
+      const animation = hasCuts ? cuts[i]?.textAnimation : 'slide';
+      const transition = hasCuts ? cuts[i]?.textTransition : 'fade';
+      const drawtextFilters = buildDrawtextFilters(
+        sceneTexts[i].main,
+        sceneTexts[i].sub,
+        sceneDuration,
+        animation,
+        transition,
+      );
       const vf = [...baseFilters, ...drawtextFilters].join(',');
       const sceneFile = path.join(tempDir, `scene-${jobId}-${i}.mp4`);
 

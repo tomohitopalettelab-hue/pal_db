@@ -56,7 +56,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
 
-app.use(cors({ origin: corsOriginList === '*' ? true : corsOriginList }));
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || corsOriginList === '*') {
+      callback(null, true);
+      return;
+    }
+    if (Array.isArray(corsOriginList) && corsOriginList.includes(origin)) {
+      callback(null, origin);
+      return;
+    }
+    callback(new Error('CORS not allowed'), false);
+  },
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(publicDir));
 

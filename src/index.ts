@@ -221,16 +221,29 @@ const downloadImage = async (url: string, dir: string): Promise<string | null> =
   }
 };
 
+const resolveFontFile = () => {
+  const candidates = [
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+    '/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  return found || '';
+};
+
+const FONT_FILE = resolveFontFile();
+
 const buildDrawtextFilters = (mainText: string, subText: string) => {
   const filters: string[] = [];
+  const fontPart = FONT_FILE ? `:fontfile=${FONT_FILE}` : '';
   if (mainText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(mainText)}':x=(w-text_w)/2:y=h*0.66:fontsize=h*0.06:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=16`,
+      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.66:fontsize=h*0.06:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=16`,
     );
   }
   if (subText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(subText)}':x=(w-text_w)/2:y=h*0.76:fontsize=h*0.035:fontcolor=white:box=1:boxcolor=black@0.3:boxborderw=12`,
+      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.76:fontsize=h*0.035:fontcolor=white:box=1:boxcolor=black@0.3:boxborderw=12`,
     );
   }
   return filters;
@@ -577,11 +590,11 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
 
     const payload = (job.payload || {}) as Record<string, unknown>;
     const resolution = parseResolution(String(payload?.resolution || '1080x1920'));
-    const durationSec = Math.min(Number(payload?.durationSec || 30) || 30, 30);
     const mainText = String(payload?.telopMain || '').trim();
     const subText = String(payload?.telopSub || '').trim();
     const colorPrimary = String(payload?.colorPrimary || '#E95464').trim() || '#E95464';
     const imageUrls = Array.isArray(payload?.imageUrls) ? payload.imageUrls : [];
+    const templateId = String(payload?.templateId || '').trim();
 
     const outputDir = path.join(publicDir, 'pal-video');
     await fs.mkdir(outputDir, { recursive: true });
@@ -591,60 +604,135 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
 
     const tempDir = path.join(tmpdir(), 'pal-video');
     await fs.mkdir(tempDir, { recursive: true });
+    const templates = new Map([
+      ['modern_15', { label: 'Modern: シンプル & クリーン', durationSec: 15, scenes: 4 }],
+      ['pop_15', { label: 'Pop: 元気 & 親しみ', durationSec: 15, scenes: 4 }],
+      ['corporate_30', { label: 'Corporate: 信頼と実績', durationSec: 30, scenes: 7 }],
+      ['elegant_30', { label: 'Elegant: ラグジュアリー', durationSec: 30, scenes: 7 }],
+    ] as const);
+
+    const resolvedTemplate = templates.get(templateId) || templates.get('modern_15')!;
+    const durationSec = Math.min(Number(payload?.durationSec || resolvedTemplate.durationSec) || resolvedTemplate.durationSec, resolvedTemplate.durationSec);
+    const sceneCount = resolvedTemplate.scenes;
+    const baseSceneSeconds = Math.floor(durationSec / sceneCount);
+    const remainder = durationSec - baseSceneSeconds * sceneCount;
+    const sceneDurations = Array.from({ length: sceneCount }).map((_, index) => baseSceneSeconds + (index < remainder ? 1 : 0));
+
+    const hearingAnswers = Array.isArray(payload?.hearingAnswers) ? payload.hearingAnswers : [];
+    const pickAnswerText = () => {
+      const next = hearingAnswers.shift();
+      return next?.a ? String(next.a) : '';
+    };
+    const purposeText = String(payload?.purpose || '用途未設定');
+    const telopMainText = mainText || 'テロップ未設定';
+    const telopSubText = subText || 'サブテロップ未設定';
+
+    const sceneTexts = Array.from({ length: sceneCount }).map((_, index) => {
+      if (index === 0) return { main: telopMainText, sub: telopSubText };
+      if (index === sceneCount - 1) return { main: 'お問い合わせはこちら', sub: 'ご相談お待ちしています' };
+      if (index === 1) return { main: `用途: ${purposeText}`, sub: '' };
+      const answer = pickAnswerText();
+      return { main: answer || `ポイント${index}`, sub: '' };
+    });
+
     console.log('[pal-db] pal-video generate start', {
       jobId,
       durationSec,
       resolution,
+      templateId: resolvedTemplate.label,
+      sceneCount,
       hasImage: imageUrls.length > 0,
     });
 
-    const imagePath = imageUrls.length > 0
-      ? await downloadImage(String(imageUrls[0]), tempDir)
-      : null;
-
-    const baseFilters: string[] = [];
-    if (imagePath) {
-      baseFilters.push(`scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=cover`);
-      baseFilters.push(`crop=${resolution.width}:${resolution.height}`);
+    const downloadedImages: (string | null)[] = [];
+    for (const url of imageUrls) {
+      const downloaded = await downloadImage(String(url), tempDir);
+      if (downloaded) downloadedImages.push(downloaded);
     }
-    baseFilters.push('format=yuv420p');
-    const drawtextFilters = buildDrawtextFilters(mainText, subText);
-    const vf = [...baseFilters, ...drawtextFilters].join(',');
 
-    const args = imagePath
-      ? [
-          '-y',
-          '-hide_banner',
-          '-loglevel', 'error',
-          '-loop', '1',
-          '-i', imagePath,
-          '-t', String(durationSec),
-          '-vf', vf,
-          '-r', '30',
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-threads', '1',
-          '-pix_fmt', 'yuv420p',
-          '-movflags', '+faststart',
-          tempOutputPath,
-        ]
-      : [
-          '-y',
-          '-hide_banner',
-          '-loglevel', 'error',
-          '-f', 'lavfi',
-          '-i', `color=c=${colorPrimary}:s=${resolution.width}x${resolution.height}:d=${durationSec}`,
-          '-vf', vf,
-          '-r', '30',
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-threads', '1',
-          '-pix_fmt', 'yuv420p',
-          '-movflags', '+faststart',
-          tempOutputPath,
-        ];
+    const sceneFiles: string[] = [];
+    for (let i = 0; i < sceneCount; i += 1) {
+      const sceneDuration = sceneDurations[i];
+      const imagePath = downloadedImages.length > 0
+        ? downloadedImages[i % downloadedImages.length]
+        : null;
+      const baseFilters: string[] = [];
+      if (imagePath) {
+        baseFilters.push(`scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=cover`);
+        baseFilters.push(`crop=${resolution.width}:${resolution.height}`);
+      }
+      baseFilters.push('format=yuv420p');
+      const drawtextFilters = buildDrawtextFilters(sceneTexts[i].main, sceneTexts[i].sub);
+      const vf = [...baseFilters, ...drawtextFilters].join(',');
+      const sceneFile = path.join(tempDir, `scene-${jobId}-${i}.mp4`);
 
-    await runFfmpeg(args);
+      const args = imagePath
+        ? [
+            '-y',
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-loop', '1',
+            '-i', imagePath,
+            '-t', String(sceneDuration),
+            '-vf', vf,
+            '-r', '30',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-threads', '1',
+            '-pix_fmt', 'yuv420p',
+            sceneFile,
+          ]
+        : [
+            '-y',
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-f', 'lavfi',
+            '-i', `color=c=${colorPrimary}:s=${resolution.width}x${resolution.height}:d=${sceneDuration}`,
+            '-vf', vf,
+            '-r', '30',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-threads', '1',
+            '-pix_fmt', 'yuv420p',
+            sceneFile,
+          ];
+
+      await runFfmpeg(args);
+      sceneFiles.push(sceneFile);
+    }
+
+    const concatListPath = path.join(tempDir, `concat-${jobId}.txt`);
+    const concatBody = sceneFiles.map((file) => `file '${file.replace(/'/g, "'\\''")}'`).join('\n');
+    await fs.writeFile(concatListPath, concatBody, 'utf-8');
+
+    try {
+      await runFfmpeg([
+        '-y',
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', concatListPath,
+        '-c', 'copy',
+        tempOutputPath,
+      ]);
+    } catch (error) {
+      await runFfmpeg([
+        '-y',
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', concatListPath,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-threads', '1',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        tempOutputPath,
+      ]);
+    }
+
     await fs.rename(tempOutputPath, outputPath).catch(async () => {
       await fs.copyFile(tempOutputPath, outputPath);
       await fs.unlink(tempOutputPath).catch(() => undefined);

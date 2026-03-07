@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pal-db メディア一覧</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #f1f5f9;
+      --card-bg: #ffffff;
+      --text-main: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --danger: #ef4444;
+      --success: #10b981;
+    }
+
+    body { font-family: 'Helvetica Neue', Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; margin: 0; background: var(--bg); color: var(--text-main); line-height: 1.6; }
+
+    header { background: #0f172a; color: #fff; padding: 1rem 1.25rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
+    .header-top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: .75rem; flex-wrap: wrap; }
+    .header-title { font-size: 1.2rem; font-weight: 700; }
+    .header-actions { display: flex; gap: .55rem; flex-wrap: wrap; }
+    .header-link { color: #fff; text-decoration: none; font-size: .85rem; padding: .45rem .75rem; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; }
+    .header-link:hover { background: rgba(255,255,255,.1); }
+
+    .service-nav { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: .5rem; }
+    .service-nav a {
+      position: relative;
+      overflow: hidden;
+      display: inline-flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-decoration: none;
+      border-radius: 10px;
+      border: 1px solid rgba(191,219,254,0.45);
+      background:
+        linear-gradient(160deg, rgba(59,130,246,0.36), rgba(30,64,175,0.14)),
+        rgba(15,23,42,0.75);
+      min-height: 46px;
+      padding: .35rem .45rem;
+      color: #e2e8f0;
+      transition: transform .2s, box-shadow .2s, border-color .2s, background .2s;
+      box-shadow: 0 6px 18px -12px rgba(59,130,246,0.75);
+    }
+    .service-nav a::before {
+      content: '';
+      position: absolute;
+      inset: -40% auto -40% -70%;
+      width: 45%;
+      transform: rotate(18deg);
+      background: linear-gradient(to right, rgba(255,255,255,0), rgba(255,255,255,.22), rgba(255,255,255,0));
+      transition: left .28s ease;
+      pointer-events: none;
+    }
+    .service-nav a:hover {
+      transform: translateY(-2px);
+      border-color: rgba(191,219,254,0.8);
+      background:
+        linear-gradient(160deg, rgba(37,99,235,0.52), rgba(30,64,175,0.18)),
+        rgba(15,23,42,0.85);
+      box-shadow: 0 14px 24px -16px rgba(96,165,250,0.9);
+      color: #fff;
+    }
+    .service-nav a:hover::before { left: 135%; }
+    .service-nav .service-label {
+      font-size: .77rem;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: .02em;
+    }
+    .service-nav .service-key {
+      margin-top: 3px;
+      font-size: .64rem;
+      letter-spacing: .08em;
+      color: #bfdbfe;
+      text-transform: uppercase;
+    }
+
+    main { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 1.25rem; }
+
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,.1); overflow: hidden; }
+    .card-header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: #f8fafc; display:flex; justify-content:space-between; align-items:center; }
+    .card-header h2 { margin: 0; font-size: 1.02rem; font-weight: 700; }
+
+    .toolbar { padding: 1rem 1.25rem; display: grid; gap: .9rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .form-group { display: flex; flex-direction: column; gap: .35rem; }
+    .form-group label { font-size: .83rem; font-weight: 700; color: #475569; display:flex; align-items:center; gap: 4px; }
+    .form-group label::before { content: ''; display:inline-block; width: 3px; height: 12px; background: var(--primary); border-radius: 2px; }
+
+    input { padding: .66rem; border: 1px solid var(--border); border-radius: 7px; font-size: .93rem; background: #fff; color: var(--text-main); transition: .2s; }
+    input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+
+    .actions { padding: 0 1.25rem 1rem; display: flex; gap: .75rem; align-items: center; }
+    button { padding: .7rem 1.1rem; border-radius: 8px; font-size: .92rem; font-weight: 700; cursor: pointer; transition: .2s; border: none; }
+    .btn-load { background: var(--primary); color: #fff; }
+    .btn-load:hover { opacity: .92; transform: translateY(-1px); }
+    .btn-delete { background: #fff; color: var(--danger); border: 1px solid #fecaca; }
+    .btn-delete:hover { background: var(--danger); color: #fff; }
+    .btn-copy { background: #e2e8f0; color: #0f172a; }
+    .btn-copy:hover { background: #cbd5f5; }
+
+    .table-container { overflow-x: auto; padding: .75rem 1rem 1rem; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .88rem; }
+    th { background: #f8fafc; padding: .8rem; text-align: left; font-weight: 700; color: var(--text-muted); border-bottom: 2px solid var(--border); }
+    td { padding: .8rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+
+    .media-preview img { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; border: 1px solid var(--border); }
+    .media-placeholder { width: 48px; height: 48px; border-radius: 10px; border: 1px dashed #94a3b8; display: flex; align-items: center; justify-content: center; font-size: .7rem; color: #64748b; background: #f8fafc; }
+
+    .url-cell { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    .url-cell a { color: var(--primary); text-decoration: none; font-weight: 700; font-size: .8rem; }
+
+    .muted { color: var(--text-muted); font-size: .82rem; }
+
+    .toast-region {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: .65rem;
+      z-index: 9999;
+      max-width: min(420px, 92vw);
+    }
+    .toast {
+      background: rgba(15, 23, 42, 0.95);
+      color: #e2e8f0;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 14px;
+      padding: .85rem 1rem;
+      box-shadow: 0 18px 38px -24px rgba(15, 23, 42, 0.8);
+      display: grid;
+      gap: .35rem;
+      animation: toast-in .25s ease;
+    }
+    .toast-title { font-weight: 800; font-size: .92rem; }
+    .toast-message { font-size: .84rem; color: #cbd5f5; }
+    .toast-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .25rem; }
+    .toast-actions button { border-radius: 999px; padding: .35rem .85rem; font-size: .78rem; border: 1px solid transparent; cursor: pointer; }
+    .toast-actions .toast-primary { background: #38bdf8; color: #0f172a; font-weight: 800; }
+    .toast-actions .toast-secondary { background: transparent; color: #e2e8f0; border-color: rgba(148, 163, 184, 0.5); }
+    .toast-success { border-color: rgba(34, 197, 94, 0.6); }
+    .toast-error { border-color: rgba(248, 113, 113, 0.7); }
+    .toast-warning { border-color: rgba(251, 191, 36, 0.7); }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 960px) {
+      .service-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+    @media (max-width: 540px) {
+      .service-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <span class="header-title">pal-db メディア一覧</span>
+      <div class="header-actions">
+        <a class="header-link" href="/admin">顧客一覧</a>
+        <a class="header-link" href="/admin/customers">顧客一覧(別)</a>
+      </div>
+    </div>
+    <nav class="service-nav" id="serviceNav"></nav>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="card-header">
+        <h2>アップロード済みメディア</h2>
+        <span class="muted" id="resultCount">- 件</span>
+      </div>
+      <div class="toolbar">
+        <div class="form-group">
+          <label>paletteId</label>
+          <input id="paletteId" placeholder="例: A0001" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn-load" type="button" onclick="loadMedia()">読み込み</button>
+        <span class="muted" id="statusMessage"></span>
+      </div>
+      <div class="table-container">
+        <table id="mediaTable"></table>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+  <script>
+    const j = async (u, o = {}) => {
+      const response = await fetch(u, o);
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok || json?.success === false) {
+        throw new Error(json?.error || 'request failed');
+      }
+      return json;
+    };
+
+    const SERVICE_LINKS = [
+      { key: 'ai', label: 'Ai', url: 'https://ai.palette-lab.com/admin' },
+      { key: 'console', label: 'Console', url: 'http://localhost:3007/admin' },
+      { key: 'trust', label: 'Trust', url: 'https://pal-trust.com/platform-admin' },
+      { key: 'ad', label: 'Ad', url: 'http://localhost:3003/admin' },
+      { key: 'video', label: 'Video', url: 'http://localhost:3004/admin' },
+      { key: 'opt', label: 'Opt', url: 'http://localhost:3005/admin' },
+      { key: 'base', label: 'Base', url: 'http://localhost:3006/admin' },
+      { key: 'studio', label: 'Studio', url: 'http://localhost:3001/admin' }
+    ];
+
+    let mediaAssets = [];
+
+    function showToast({ title, message, type = 'info', duration = 4200, actions = [] }) {
+      const region = document.getElementById('toastRegion');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'toast-title';
+      titleEl.textContent = title;
+      toast.appendChild(titleEl);
+
+      if (message) {
+        const messageEl = document.createElement('div');
+        messageEl.className = 'toast-message';
+        messageEl.textContent = message;
+        toast.appendChild(messageEl);
+      }
+
+      if (actions.length) {
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'toast-actions';
+        actions.forEach((action) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = action.label;
+          btn.className = action.primary ? 'toast-primary' : 'toast-secondary';
+          btn.addEventListener('click', () => {
+            action.onClick?.();
+            closeToast();
+          });
+          actionsEl.appendChild(btn);
+        });
+        toast.appendChild(actionsEl);
+      }
+
+      region.appendChild(toast);
+
+      let timer = null;
+      if (duration > 0) {
+        timer = setTimeout(() => closeToast(), duration);
+      }
+
+      function closeToast() {
+        if (timer) clearTimeout(timer);
+        toast.remove();
+      }
+
+      return { close: closeToast };
+    }
+
+    function toastConfirm(message, { title = '確認', confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
+      return new Promise((resolve) => {
+        showToast({
+          type: 'warning',
+          title,
+          message,
+          duration: 0,
+          actions: [
+            { label: cancelLabel, onClick: () => resolve(false) },
+            { label: confirmLabel, primary: true, onClick: () => resolve(true) }
+          ]
+        });
+      });
+    }
+
+    function notifyError(message) {
+      showToast({ type: 'error', title: 'エラー', message });
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes <= 0) return '-';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      const idx = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      return `${(bytes / Math.pow(1024, idx)).toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+    }
+
+    function renderServiceNav() {
+      const nav = document.getElementById('serviceNav');
+      nav.innerHTML = SERVICE_LINKS.map(item => `
+        <a href="${item.url}" target="_blank" rel="noreferrer" title="${item.label}">
+          <span class="service-label">${item.label}</span>
+          <span class="service-key">${item.key}</span>
+        </a>
+      `).join('');
+    }
+
+    function renderMediaTable() {
+      const table = document.getElementById('mediaTable');
+      if (!mediaAssets.length) {
+        table.innerHTML = `
+          <tr>
+            <th>プレビュー</th><th>ファイル</th><th>種別</th><th>サイズ</th><th>作成日</th><th>URL</th><th>操作</th>
+          </tr>
+          <tr>
+            <td colspan="7" class="muted">メディアがありません</td>
+          </tr>
+        `;
+        return;
+      }
+
+      table.innerHTML = `
+        <tr>
+          <th>プレビュー</th><th>ファイル</th><th>種別</th><th>サイズ</th><th>作成日</th><th>URL</th><th>操作</th>
+        </tr>
+      ` + mediaAssets.map(asset => {
+        const preview = asset.mimeType && asset.mimeType.startsWith('image/')
+          ? `<img src="${asset.url}" alt="${escapeHtml(asset.originalName || asset.fileName)}" />`
+          : `<div class="media-placeholder">FILE</div>`;
+
+        return `
+          <tr>
+            <td class="media-preview">${preview}</td>
+            <td>${escapeHtml(asset.originalName || asset.fileName)}</td>
+            <td>${escapeHtml(asset.mimeType || '-')}</td>
+            <td>${formatBytes(asset.sizeBytes)}</td>
+            <td>${new Date(asset.createdAt).toLocaleString()}</td>
+            <td>
+              <div class="url-cell">
+                <a href="${asset.url}" target="_blank" rel="noreferrer">開く</a>
+                <button class="btn-copy" type="button" onclick="copyUrl('${asset.url}')">URLをコピー</button>
+              </div>
+            </td>
+            <td>
+              <button class="btn-delete" type="button" onclick="deleteMedia('${asset.id}')">削除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadMedia() {
+      const paletteId = document.getElementById('paletteId').value.trim();
+      if (!paletteId) {
+        notifyError('paletteId を入力してください');
+        return;
+      }
+
+      document.getElementById('statusMessage').textContent = '読み込み中...';
+      try {
+        const res = await j(`/api/media?paletteId=${encodeURIComponent(paletteId)}`);
+        mediaAssets = Array.isArray(res.assets) ? res.assets : [];
+        document.getElementById('resultCount').textContent = `${mediaAssets.length} 件`;
+        renderMediaTable();
+      } catch (error) {
+        notifyError(error.message || '読み込みに失敗しました');
+      } finally {
+        document.getElementById('statusMessage').textContent = '';
+      }
+    }
+
+    async function deleteMedia(id) {
+      const ok = await toastConfirm('このメディアを削除しますか？', { confirmLabel: '削除' });
+      if (!ok) return;
+      try {
+        await j(`/api/media/${id}`, { method: 'DELETE' });
+        showToast({ type: 'success', title: '削除しました' });
+        loadMedia();
+      } catch (error) {
+        notifyError(error.message || '削除に失敗しました');
+      }
+    }
+
+    function copyUrl(url) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url)
+          .then(() => showToast({ type: 'success', title: 'URLをコピーしました' }))
+          .catch(() => notifyError('コピーに失敗しました'));
+        return;
+      }
+
+      const temp = document.createElement('input');
+      temp.value = url;
+      document.body.appendChild(temp);
+      temp.select();
+      try {
+        const ok = document.execCommand('copy');
+        if (ok) showToast({ type: 'success', title: 'URLをコピーしました' });
+        else notifyError('コピーに失敗しました');
+      } catch (error) {
+        notifyError('コピーに失敗しました');
+      } finally {
+        temp.remove();
+      }
+    }
+
+    renderServiceNav();
+    renderMediaTable();
+  </script>
+</body>
+</html>

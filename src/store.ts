@@ -1354,7 +1354,12 @@ export const deleteAccount = async (id: string) => {
 
 export const deletePlan = async (id: string) => {
   await ensureTables();
-  await sql`DELETE FROM service_plans WHERE id = ${id}`;
+  await sql`
+    UPDATE service_plans
+    SET is_active = FALSE,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `;
 };
 
 export const deleteContract = async (id: string) => {

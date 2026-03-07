@@ -24,6 +24,7 @@
     header { background: #0f172a; color: #fff; padding: 1rem 2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
     .header-main { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 0.8rem; }
     header span { font-size: 1.25rem; font-weight: 700; }
+    .header-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: flex-end; }
     header a { color: #fff; text-decoration: none; font-size: 0.85rem; padding: 0.5rem 0.8rem; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; transition: 0.2s; }
     header a:hover { background: rgba(255,255,255,0.1); }
 
@@ -156,6 +157,42 @@
     
     code { background: var(--accent-blue); color: var(--primary); padding: 2px 6px; border-radius: 4px; font-weight: 600; }
 
+    .toast-region {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      z-index: 9999;
+      max-width: min(420px, 92vw);
+    }
+    .toast {
+      background: rgba(15, 23, 42, 0.95);
+      color: #e2e8f0;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 14px;
+      padding: 0.85rem 1rem;
+      box-shadow: 0 18px 38px -24px rgba(15, 23, 42, 0.8);
+      display: grid;
+      gap: 0.35rem;
+      animation: toast-in 0.25s ease;
+    }
+    .toast-title { font-weight: 800; font-size: 0.92rem; }
+    .toast-message { font-size: 0.84rem; color: #cbd5f5; }
+    .toast-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.25rem; }
+    .toast-actions button { border-radius: 999px; padding: 0.35rem 0.85rem; font-size: 0.78rem; border: 1px solid transparent; cursor: pointer; }
+    .toast-actions .toast-primary { background: #38bdf8; color: #0f172a; font-weight: 800; }
+    .toast-actions .toast-secondary { background: transparent; color: #e2e8f0; border-color: rgba(148, 163, 184, 0.5); }
+    .toast-success { border-color: rgba(34, 197, 94, 0.6); }
+    .toast-error { border-color: rgba(248, 113, 113, 0.7); }
+    .toast-warning { border-color: rgba(251, 191, 36, 0.7); }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     @media (max-width: 1100px) {
       .service-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     }
@@ -169,7 +206,10 @@
   <header>
     <div class="header-main">
       <span>pal-db 顧客詳細</span>
-      <a href="/admin">← 顧客一覧に戻る</a>
+      <div class="header-actions">
+        <a href="/admin">← 顧客一覧に戻る</a>
+        <a href="/admin/media">メディア一覧</a>
+      </div>
     </div>
     <nav class="service-nav" id="service-nav"></nav>
   </header>
@@ -377,6 +417,74 @@
     let editingContractId = null;
     let activeAdminTab = 'customer';
 
+    function showToast({ title, message, type = 'info', duration = 4200, actions = [] }) {
+      const region = document.getElementById('toastRegion');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'toast-title';
+      titleEl.textContent = title;
+      toast.appendChild(titleEl);
+
+      if (message) {
+        const messageEl = document.createElement('div');
+        messageEl.className = 'toast-message';
+        messageEl.textContent = message;
+        toast.appendChild(messageEl);
+      }
+
+      if (actions.length) {
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'toast-actions';
+        actions.forEach((action) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = action.label;
+          btn.className = action.primary ? 'toast-primary' : 'toast-secondary';
+          btn.addEventListener('click', () => {
+            action.onClick?.();
+            closeToast();
+          });
+          actionsEl.appendChild(btn);
+        });
+        toast.appendChild(actionsEl);
+      }
+
+      region.appendChild(toast);
+
+      let timer = null;
+      if (duration > 0) {
+        timer = setTimeout(() => closeToast(), duration);
+      }
+
+      function closeToast() {
+        if (timer) clearTimeout(timer);
+        toast.remove();
+      }
+
+      return { close: closeToast };
+    }
+
+    function toastConfirm(message, { title = '確認', confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
+      return new Promise((resolve) => {
+        showToast({
+          type: 'warning',
+          title,
+          message,
+          duration: 0,
+          actions: [
+            { label: cancelLabel, onClick: () => resolve(false) },
+            { label: confirmLabel, primary: true, onClick: () => resolve(true) }
+          ]
+        });
+      });
+    }
+
+    function notifyError(message) {
+      showToast({ type: 'error', title: 'エラー', message });
+    }
+
     function setActiveTab(tabName) {
       activeAdminTab = tabName;
       document.querySelectorAll('[data-tab-panel]').forEach((panel) => {
@@ -447,13 +555,16 @@
         node.innerHTML = '-';
         return;
       }
-      node.innerHTML = plans.map((plan) => (
-        `<span style="display:inline-flex;align-items:center;gap:8px;margin:4px 8px 4px 0;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:#fff;">
-          <span>${escapeHtml(plan.name)} <small style="color:#64748b;">(${escapeHtml(plan.code)})</small></span>
-          <button class="btn-refresh" style="padding:2px 6px;font-size:11px;" onclick="startEditPlan('${plan.id}')">編集</button>
-          <button class="btn-delete" style="padding:2px 6px;font-size:11px;" onclick="del('/api/plans/${plan.id}')">削除</button>
-        </span>`
-      )).join('');
+      node.innerHTML = plans.map((plan) => {
+        const inactiveLabel = plan.isActive ? '' : '<small style="color:#f97316;">停止</small>';
+        return (
+          `<span style="display:inline-flex;align-items:center;gap:8px;margin:4px 8px 4px 0;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:#fff;">
+            <span>${escapeHtml(plan.name)} <small style="color:#64748b;">(${escapeHtml(plan.code)})</small> ${inactiveLabel}</span>
+            <button class="btn-refresh" style="padding:2px 6px;font-size:11px;" onclick="startEditPlan('${plan.id}')">編集</button>
+            <button class="btn-delete" style="padding:2px 6px;font-size:11px;" onclick="del('/api/plans/${plan.id}')">削除</button>
+          </span>`
+        );
+      }).join('');
     }
 
     function renderAccountStatusChips() {
@@ -644,132 +755,147 @@
     }
 
     async function refreshAll() {
-      const [accRes, planRes] = await Promise.all([
-        j('/api/accounts'),
-        j('/api/plans?includeInactive=1')
-      ]);
-      const accounts = Array.isArray(accRes.accounts) ? accRes.accounts : [];
-      account = accounts.find(a => a.id === customerId) || null;
-      plans = Array.isArray(planRes.plans) ? planRes.plans : [];
+      try {
+        const [accRes, planRes] = await Promise.all([
+          j('/api/accounts'),
+          j('/api/plans?includeInactive=1')
+        ]);
+        const accounts = Array.isArray(accRes.accounts) ? accRes.accounts : [];
+        account = accounts.find(a => a.id === customerId) || null;
+        plans = Array.isArray(planRes.plans) ? planRes.plans : [];
 
-      if (!account) {
-        alert('対象顧客が見つかりません。');
-        location.href = '/admin';
-        return;
-      }
+        if (!account) {
+          showToast({ type: 'error', title: '対象顧客が見つかりません', message: '一覧へ戻ります' });
+          setTimeout(() => { location.href = '/admin'; }, 1200);
+          return;
+        }
 
-      document.getElementById('accPalette').value = account.paletteId || '';
-      document.getElementById('accName').value = account.name || '';
-      document.getElementById('accShopName').value = account.shopName || '';
-      document.getElementById('accPersonName').value = account.personName || '';
-      document.getElementById('accPersonKana').value = account.personKana || '';
-      document.getElementById('accZip').value = account.zip || '';
-      document.getElementById('accAddress').value = account.address || '';
-      document.getElementById('accPhone').value = account.phone || '';
-      document.getElementById('accMobile').value = account.mobile || '';
-      document.getElementById('accEmail').value = account.contactEmail || '';
-      document.getElementById('accChatLoginId').value = account.chatLoginId || '';
-      document.getElementById('accChatPassword').value = account.chatPassword || '';
-      document.getElementById('accStatus').value = account.status || 'active';
-      if (document.getElementById('accStatus').value !== (account.status || '')) {
-        const fallback = document.createElement('option');
-        fallback.value = account.status || 'active';
-        fallback.textContent = account.status || 'active';
-        document.getElementById('accStatus').appendChild(fallback);
+        document.getElementById('accPalette').value = account.paletteId || '';
+        document.getElementById('accName').value = account.name || '';
+        document.getElementById('accShopName').value = account.shopName || '';
+        document.getElementById('accPersonName').value = account.personName || '';
+        document.getElementById('accPersonKana').value = account.personKana || '';
+        document.getElementById('accZip').value = account.zip || '';
+        document.getElementById('accAddress').value = account.address || '';
+        document.getElementById('accPhone').value = account.phone || '';
+        document.getElementById('accMobile').value = account.mobile || '';
+        document.getElementById('accEmail').value = account.contactEmail || '';
+        document.getElementById('accChatLoginId').value = account.chatLoginId || '';
+        document.getElementById('accChatPassword').value = account.chatPassword || '';
         document.getElementById('accStatus').value = account.status || 'active';
-      }
-      document.getElementById('accMeta').innerHTML = `システム内部ID: <code>${account.id}</code>`;
+        if (document.getElementById('accStatus').value !== (account.status || '')) {
+          const fallback = document.createElement('option');
+          fallback.value = account.status || 'active';
+          fallback.textContent = account.status || 'active';
+          document.getElementById('accStatus').appendChild(fallback);
+          document.getElementById('accStatus').value = account.status || 'active';
+        }
+        document.getElementById('accMeta').innerHTML = `システム内部ID: <code>${account.id}</code>`;
 
-      setPlanOptions(editingContractId ? document.getElementById('ctrPlan').value : '');
+        setPlanOptions(editingContractId ? document.getElementById('ctrPlan').value : '');
 
-      const ctrRes = await j(`/api/contracts?accountId=${encodeURIComponent(account.id)}`);
-      contracts = Array.isArray(ctrRes.contracts) ? ctrRes.contracts : [];
-      renderContracts();
+        const ctrRes = await j(`/api/contracts?accountId=${encodeURIComponent(account.id)}`);
+        contracts = Array.isArray(ctrRes.contracts) ? ctrRes.contracts : [];
+        renderContracts();
 
-      if (editingContractId) {
-        const exists = contracts.some(item => item.id === editingContractId);
-        if (exists) startEditContract(editingContractId);
-        else resetContractForm();
+        if (editingContractId) {
+          const exists = contracts.some(item => item.id === editingContractId);
+          if (exists) startEditContract(editingContractId);
+          else resetContractForm();
+        }
+      } catch (error) {
+        notifyError(error.message || '読み込みに失敗しました');
       }
     }
 
     async function saveAccount() {
-      const res = await j('/api/accounts', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
-          id: account.id,
-          paletteId: document.getElementById('accPalette').value,
-          name: document.getElementById('accName').value,
-          contactEmail: document.getElementById('accEmail').value || null,
-          chatLoginId: document.getElementById('accChatLoginId').value || null,
-          chatPassword: document.getElementById('accChatPassword').value || null,
-          status: document.getElementById('accStatus').value,
-          // 拡張項目
-          shopName: document.getElementById('accShopName').value,
-          personName: document.getElementById('accPersonName').value,
-          personKana: document.getElementById('accPersonKana').value,
-          zip: document.getElementById('accZip').value,
-          address: document.getElementById('accAddress').value,
-          phone: document.getElementById('accPhone').value,
-          mobile: document.getElementById('accMobile').value
-        })
-      });
-      if (!res.success) { alert(res.error || '更新失敗'); return; }
-      alert('顧客情報を更新しました');
-      refreshAll();
+      try {
+        await j('/api/accounts', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+            id: account.id,
+            paletteId: document.getElementById('accPalette').value,
+            name: document.getElementById('accName').value,
+            contactEmail: document.getElementById('accEmail').value || null,
+            chatLoginId: document.getElementById('accChatLoginId').value || null,
+            chatPassword: document.getElementById('accChatPassword').value || null,
+            status: document.getElementById('accStatus').value,
+            // 拡張項目
+            shopName: document.getElementById('accShopName').value,
+            personName: document.getElementById('accPersonName').value,
+            personKana: document.getElementById('accPersonKana').value,
+            zip: document.getElementById('accZip').value,
+            address: document.getElementById('accAddress').value,
+            phone: document.getElementById('accPhone').value,
+            mobile: document.getElementById('accMobile').value
+          })
+        });
+        showToast({ type: 'success', title: '顧客情報を更新しました' });
+        refreshAll();
+      } catch (error) {
+        notifyError(error.message || '更新に失敗しました');
+      }
     }
 
     async function savePlan() {
       const code = document.getElementById('planCode').value.trim();
       const name = document.getElementById('planName').value.trim();
       if (!code || !name) {
-        alert('プランコードとプラン名は必須です');
+        notifyError('プランコードとプラン名は必須です');
         return;
       }
 
-      const res = await j('/api/plans', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          id: document.getElementById('planEditId').value || undefined,
-          code,
-          name,
-          description: document.getElementById('planDesc').value || null,
-          defaultPriceYen: Number(document.getElementById('planPrice').value || 0)
-        })
-      });
-
-      if (!res.success) { alert(res.error || 'プラン追加失敗'); return; }
-      alert(document.getElementById('planEditId').value ? 'プランを更新しました' : 'プランを追加しました');
-      cancelPlanEdit();
-      refreshAll();
+      try {
+        await j('/api/plans', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            id: document.getElementById('planEditId').value || undefined,
+            code,
+            name,
+            description: document.getElementById('planDesc').value || null,
+            defaultPriceYen: Number(document.getElementById('planPrice').value || 0)
+          })
+        });
+        showToast({ type: 'success', title: document.getElementById('planEditId').value ? 'プランを更新しました' : 'プランを追加しました' });
+        cancelPlanEdit();
+        refreshAll();
+      } catch (error) {
+        notifyError(error.message || 'プラン保存に失敗しました');
+      }
     }
 
     async function saveContract() {
       const planId = document.getElementById('ctrPlan').value;
-      if(!planId) { alert('プランを選択してください'); return; }
+      if(!planId) {
+        notifyError('プランを選択してください');
+        return;
+      }
 
-      const res = await j('/api/contracts', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
-          id: document.getElementById('ctrId').value || undefined,
-          accountId: account.id,
-          planId: planId,
-          phase: document.getElementById('ctrPhase').value,
-          priceInitial: Number(document.getElementById('ctrPriceInitial').value || 0),
-          priceYen: Number(document.getElementById('ctrPrice').value || 0),
-          term: document.getElementById('ctrTerm').value,
-          paymentMethod: document.getElementById('ctrPaymentMethod').value,
-          payDate: document.getElementById('ctrPayDate').value,
-          dateContract: document.getElementById('ctrDateContract').value,
-          dateDelivery: document.getElementById('ctrDateDelivery').value,
-          startDate: document.getElementById('ctrStart').value,
-          endDate: document.getElementById('ctrEnd').value || null,
-          status: document.getElementById('ctrStatus').value
-        })
-      });
-      if (!res.success) { alert(res.error || '保存失敗'); return; }
-      alert(editingContractId ? 'サービス詳細を更新しました' : 'サービス詳細を追加しました');
-      resetContractForm();
-      refreshAll();
+      try {
+        await j('/api/contracts', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+            id: document.getElementById('ctrId').value || undefined,
+            accountId: account.id,
+            planId: planId,
+            phase: document.getElementById('ctrPhase').value,
+            priceInitial: Number(document.getElementById('ctrPriceInitial').value || 0),
+            priceYen: Number(document.getElementById('ctrPrice').value || 0),
+            term: document.getElementById('ctrTerm').value,
+            paymentMethod: document.getElementById('ctrPaymentMethod').value,
+            payDate: document.getElementById('ctrPayDate').value,
+            dateContract: document.getElementById('ctrDateContract').value,
+            dateDelivery: document.getElementById('ctrDateDelivery').value,
+            startDate: document.getElementById('ctrStart').value,
+            endDate: document.getElementById('ctrEnd').value || null,
+            status: document.getElementById('ctrStatus').value
+          })
+        });
+        showToast({ type: 'success', title: editingContractId ? 'サービス詳細を更新しました' : 'サービス詳細を追加しました' });
+        resetContractForm();
+        refreshAll();
+      } catch (error) {
+        notifyError(error.message || '保存に失敗しました');
+      }
     }
 
     async function addContractOption(optionType) {
@@ -778,33 +904,44 @@
       const value = document.getElementById(valueId).value.trim();
       const label = document.getElementById(labelId).value.trim();
       if (!value || !label) {
-        alert('値と表示名は必須です');
+        notifyError('値と表示名は必須です');
         return;
       }
 
-      await j('/api/contract-options', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: document.getElementById(`${optionType}Id`).value || undefined,
-          optionType,
-          value,
-          label,
-          isActive: true,
-        })
-      });
+      try {
+        await j('/api/contract-options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: document.getElementById(`${optionType}Id`).value || undefined,
+            optionType,
+            value,
+            label,
+            isActive: true,
+          })
+        });
 
-      cancelContractOptionEdit(optionType);
-      await loadContractOptions();
-      if (editingContractId) startEditContract(editingContractId);
+        cancelContractOptionEdit(optionType);
+        await loadContractOptions();
+        if (editingContractId) startEditContract(editingContractId);
+        showToast({ type: 'success', title: '選択肢を保存しました' });
+      } catch (error) {
+        notifyError(error.message || '保存に失敗しました');
+      }
     }
 
     async function deleteContractOption(id) {
-      if (!confirm('この選択肢を削除しますか？')) return;
-      await fetch(`/api/contract-options/${id}`, { method: 'DELETE' });
-      await loadContractOptions();
-      if (editingContractId) startEditContract(editingContractId);
-      else resetContractForm();
+      const ok = await toastConfirm('この選択肢を削除しますか？', { confirmLabel: '削除' });
+      if (!ok) return;
+      try {
+        await j(`/api/contract-options/${id}`, { method: 'DELETE' });
+        await loadContractOptions();
+        if (editingContractId) startEditContract(editingContractId);
+        else resetContractForm();
+        showToast({ type: 'success', title: '削除しました' });
+      } catch (error) {
+        notifyError(error.message || '削除に失敗しました');
+      }
     }
 
     async function saveAccountStatusOption() {
@@ -812,42 +949,65 @@
       const value = document.getElementById('accountStatusValue').value.trim();
       const label = document.getElementById('accountStatusLabel').value.trim();
       if (!value || !label) {
-        alert('値と表示名は必須です');
+        notifyError('値と表示名は必須です');
         return;
       }
 
-      await j('/api/account-status-options', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, value, label, isActive: true }),
-      });
+      try {
+        await j('/api/account-status-options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, value, label, isActive: true }),
+        });
 
-      cancelAccountStatusEdit();
-      await loadAccountStatusOptions();
-      if (account?.status) {
-        document.getElementById('accStatus').value = account.status;
+        cancelAccountStatusEdit();
+        await loadAccountStatusOptions();
+        if (account?.status) {
+          document.getElementById('accStatus').value = account.status;
+        }
+        showToast({ type: 'success', title: '顧客ステータスを保存しました' });
+      } catch (error) {
+        notifyError(error.message || '保存に失敗しました');
       }
     }
 
     async function deleteAccountStatusOption(id) {
-      if (!confirm('この顧客ステータスを削除しますか？')) return;
-      await fetch(`/api/account-status-options/${id}`, { method: 'DELETE' });
-      await loadAccountStatusOptions();
-      if (account?.status) {
-        document.getElementById('accStatus').value = account.status;
+      const ok = await toastConfirm('この顧客ステータスを削除しますか？', { confirmLabel: '削除' });
+      if (!ok) return;
+      try {
+        await j(`/api/account-status-options/${id}`, { method: 'DELETE' });
+        await loadAccountStatusOptions();
+        if (account?.status) {
+          document.getElementById('accStatus').value = account.status;
+        }
+        showToast({ type: 'success', title: '削除しました' });
+      } catch (error) {
+        notifyError(error.message || '削除に失敗しました');
       }
     }
 
     async function deleteAccount() {
-      if (!confirm('この顧客を完全に削除しますか？')) return;
-      await fetch(`/api/accounts/${account.id}`, { method: 'DELETE' });
-      location.href = '/admin';
+      const ok = await toastConfirm('この顧客を完全に削除しますか？', { confirmLabel: '削除' });
+      if (!ok) return;
+      try {
+        await j(`/api/accounts/${account.id}`, { method: 'DELETE' });
+        showToast({ type: 'success', title: '削除しました' });
+        setTimeout(() => { location.href = '/admin'; }, 900);
+      } catch (error) {
+        notifyError(error.message || '削除に失敗しました');
+      }
     }
 
     async function del(url) {
-      if (!confirm('このデータを削除しますか？')) return;
-      await fetch(url, { method: 'DELETE' });
-      refreshAll();
+      const ok = await toastConfirm('このデータを削除しますか？', { confirmLabel: '削除' });
+      if (!ok) return;
+      try {
+        await j(url, { method: 'DELETE' });
+        showToast({ type: 'success', title: '削除しました' });
+        refreshAll();
+      } catch (error) {
+        notifyError(error.message || '削除に失敗しました');
+      }
     }
 
     // 初期日付セット
@@ -864,8 +1024,9 @@
         return refreshAll();
       })
       .catch((error) => {
-        alert(error.message);
+        notifyError(error.message || '初期化に失敗しました');
       });
   </script>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 </body>
 </html>

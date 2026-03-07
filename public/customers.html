@@ -23,6 +23,7 @@
     header { background: #0f172a; color: #fff; padding: 1rem 1.25rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
     .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; }
     .header-title { font-size: 1.2rem; font-weight: 700; }
+    .header-actions { display: flex; gap: .55rem; flex-wrap: wrap; }
     .header-link { color: #fff; text-decoration: none; font-size: .85rem; padding: .45rem .75rem; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; }
     .header-link:hover { background: rgba(255,255,255,.1); }
 
@@ -155,6 +156,42 @@
 
     .muted { color: var(--text-muted); font-size: .82rem; }
 
+    .toast-region {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: .65rem;
+      z-index: 9999;
+      max-width: min(420px, 92vw);
+    }
+    .toast {
+      background: rgba(15, 23, 42, 0.95);
+      color: #e2e8f0;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 14px;
+      padding: .85rem 1rem;
+      box-shadow: 0 18px 38px -24px rgba(15, 23, 42, 0.8);
+      display: grid;
+      gap: .35rem;
+      animation: toast-in .25s ease;
+    }
+    .toast-title { font-weight: 800; font-size: .92rem; }
+    .toast-message { font-size: .84rem; color: #cbd5f5; }
+    .toast-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .25rem; }
+    .toast-actions button { border-radius: 999px; padding: .35rem .85rem; font-size: .78rem; border: 1px solid transparent; cursor: pointer; }
+    .toast-actions .toast-primary { background: #38bdf8; color: #0f172a; font-weight: 800; }
+    .toast-actions .toast-secondary { background: transparent; color: #e2e8f0; border-color: rgba(148, 163, 184, 0.5); }
+    .toast-success { border-color: rgba(34, 197, 94, 0.6); }
+    .toast-error { border-color: rgba(248, 113, 113, 0.7); }
+    .toast-warning { border-color: rgba(251, 191, 36, 0.7); }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     @media (max-width: 960px) {
       .service-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     }
@@ -167,7 +204,10 @@
   <header>
     <div class="header-top">
       <span class="header-title">pal-db 顧客一覧</span>
-      <a class="header-link" href="/admin">一覧を再表示</a>
+      <div class="header-actions">
+        <a class="header-link" href="/admin">一覧を再表示</a>
+        <a class="header-link" href="/admin/media">メディア一覧</a>
+      </div>
     </div>
     <nav class="service-nav" id="serviceNav"></nav>
   </header>
@@ -235,7 +275,14 @@
   </main>
 
   <script>
-    const j = (u, o = {}) => fetch(u, o).then(r => r.json());
+    const j = async (u, o = {}) => {
+      const response = await fetch(u, o);
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok || json?.success === false) {
+        throw new Error(json?.error || 'request failed');
+      }
+      return json;
+    };
 
     const SERVICE_LINKS = [
       { key: 'ai', label: 'Ai', url: 'https://ai.palette-lab.com/admin' },
@@ -252,6 +299,74 @@
     let allPlans = [];
     let accountStatusOptions = [];
     let accountStatusLabelMap = {};
+
+    function showToast({ title, message, type = 'info', duration = 4200, actions = [] }) {
+      const region = document.getElementById('toastRegion');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'toast-title';
+      titleEl.textContent = title;
+      toast.appendChild(titleEl);
+
+      if (message) {
+        const messageEl = document.createElement('div');
+        messageEl.className = 'toast-message';
+        messageEl.textContent = message;
+        toast.appendChild(messageEl);
+      }
+
+      if (actions.length) {
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'toast-actions';
+        actions.forEach((action) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = action.label;
+          btn.className = action.primary ? 'toast-primary' : 'toast-secondary';
+          btn.addEventListener('click', () => {
+            action.onClick?.();
+            closeToast();
+          });
+          actionsEl.appendChild(btn);
+        });
+        toast.appendChild(actionsEl);
+      }
+
+      region.appendChild(toast);
+
+      let timer = null;
+      if (duration > 0) {
+        timer = setTimeout(() => closeToast(), duration);
+      }
+
+      function closeToast() {
+        if (timer) clearTimeout(timer);
+        toast.remove();
+      }
+
+      return { close: closeToast };
+    }
+
+    function toastConfirm(message, { title = '確認', confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
+      return new Promise((resolve) => {
+        showToast({
+          type: 'warning',
+          title,
+          message,
+          duration: 0,
+          actions: [
+            { label: cancelLabel, onClick: () => resolve(false) },
+            { label: confirmLabel, primary: true, onClick: () => resolve(true) }
+          ]
+        });
+      });
+    }
+
+    function notifyError(message) {
+      showToast({ type: 'error', title: 'エラー', message });
+    }
 
     function setActiveTab(tabName) {
       document.querySelectorAll('[data-tab-panel]').forEach((panel) => {
@@ -365,21 +480,25 @@
     }
 
     async function refreshAll() {
-      const [accountData, planData, statusData] = await Promise.all([
-        j('/api/accounts'),
-        j('/api/plans?includeInactive=1'),
-        j('/api/account-status-options?includeInactive=1')
-      ]);
-      allAccounts = Array.isArray(accountData.accounts) ? accountData.accounts : [];
-      allPlans = Array.isArray(planData.plans) ? planData.plans : [];
-      accountStatusOptions = Array.isArray(statusData.options) ? statusData.options.map(o => ({
-        value: o.value,
-        label: o.label,
-        isActive: o.isActive
-      })) : [];
-      setStatusOptions();
-      renderPlans(allPlans);
-      applyFilters();
+      try {
+        const [accountData, planData, statusData] = await Promise.all([
+          j('/api/accounts'),
+          j('/api/plans'),
+          j('/api/account-status-options?includeInactive=1')
+        ]);
+        allAccounts = Array.isArray(accountData.accounts) ? accountData.accounts : [];
+        allPlans = Array.isArray(planData.plans) ? planData.plans : [];
+        accountStatusOptions = Array.isArray(statusData.options) ? statusData.options.map(o => ({
+          value: o.value,
+          label: o.label,
+          isActive: o.isActive
+        })) : [];
+        setStatusOptions();
+        renderPlans(allPlans);
+        applyFilters();
+      } catch (error) {
+        notifyError(error.message || '読み込みに失敗しました');
+      }
     }
 
     async function createAccount() {
@@ -388,18 +507,19 @@
       const status = document.getElementById('createStatus').value;
 
       if (!name) {
-        alert('顧客名は必須です。');
+        notifyError('顧客名は必須です。');
         return;
       }
 
-      const res = await j('/api/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, contactEmail: contactEmail || null, status })
-      });
-
-      if (!res.success) {
-        alert(res.error || '顧客作成に失敗しました');
+      let res;
+      try {
+        res = await j('/api/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, contactEmail: contactEmail || null, status })
+        });
+      } catch (error) {
+        notifyError(error.message || '顧客作成に失敗しました');
         return;
       }
 
@@ -411,7 +531,7 @@
       }
 
       await refreshAll();
-      alert(`顧客を作成しました。顧客ID: ${res.account.paletteId}`);
+      showToast({ type: 'success', title: '顧客を作成しました', message: `顧客ID: ${res.account.paletteId}` });
       window.location.href = `/admin/customers/${res.account.id}`;
     }
 
@@ -422,18 +542,18 @@
       const defaultPriceYen = Number(document.getElementById('planPrice').value || 0);
 
       if (!code || !name) {
-        alert('プランコード と プラン名 は必須です。');
+        notifyError('プランコード と プラン名 は必須です。');
         return;
       }
 
-      const res = await j('/api/plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, name, billingCycle, defaultPriceYen, isActive: true })
-      });
-
-      if (!res.success) {
-        alert(res.error || 'プラン追加に失敗しました');
+      try {
+        await j('/api/plans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, name, billingCycle, defaultPriceYen, isActive: true })
+        });
+      } catch (error) {
+        notifyError(error.message || 'プラン追加に失敗しました');
         return;
       }
 
@@ -443,17 +563,25 @@
       document.getElementById('planPrice').value = '0';
 
       await refreshAll();
+      showToast({ type: 'success', title: 'プランを追加しました' });
     }
 
     async function deleteRow(url) {
-      if (!confirm('削除しますか？')) return;
-      await fetch(url, { method: 'DELETE' });
-      await refreshAll();
+      const ok = await toastConfirm('削除しますか？', { confirmLabel: '削除' });
+      if (!ok) return;
+      try {
+        await j(url, { method: 'DELETE' });
+        showToast({ type: 'success', title: '削除しました' });
+        await refreshAll();
+      } catch (error) {
+        notifyError(error.message || '削除に失敗しました');
+      }
     }
 
     initTabs();
     initServiceNav();
     refreshAll();
   </script>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 </body>
 </html>

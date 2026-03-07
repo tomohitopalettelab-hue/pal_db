@@ -233,6 +233,10 @@ app.get('/admin/customers/:id', (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, 'admin.html'));
 });
 
+app.get('/admin/media', (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicDir, 'media.html'));
+});
+
 app.get('/health', async (_req: Request, res: Response) => {
   try {
     await ensureTables();

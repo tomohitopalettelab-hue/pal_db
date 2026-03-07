@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: pal-db
+    env: node
+    plan: starter
+    buildCommand: npm install ; npm run build
+    startCommand: npm run start
+    envVars:
+      - key: PAL_DB_MEDIA_DIR
+        value: /var/data/media
+    disk:
+      name: pal-db-media
+      mountPath: /var/data
+      sizeGB: 5

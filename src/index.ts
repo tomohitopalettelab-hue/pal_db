@@ -239,6 +239,8 @@ const resolveFontFile = () => {
 const FONT_FILE = resolveFontFile();
 const FONT_FAMILY = 'Noto Sans CJK JP';
 
+const escapeFfmpegExpr = (expr: string) => expr.replace(/,/g, '\\,');
+
 const buildDrawtextFilters = (mainText: string, subText: string, durationSec: number) => {
   const filters: string[] = [];
   const fontPart = FONT_FILE
@@ -246,15 +248,19 @@ const buildDrawtextFilters = (mainText: string, subText: string, durationSec: nu
     : `:font=${FONT_FAMILY}`;
   const fadeIn = 0.35;
   const fadeOut = 0.35;
-  const baseAlpha = `if(lt(t,${fadeIn}),t/${fadeIn},if(lt(t,${Math.max(durationSec - fadeOut, fadeIn)}),1,((${durationSec}-t)/${fadeOut})))`;
+  const baseAlpha = escapeFfmpegExpr(
+    `if(lt(t,${fadeIn}),t/${fadeIn},if(lt(t,${Math.max(durationSec - fadeOut, fadeIn)}),1,((${durationSec}-t)/${fadeOut})))`,
+  );
+  const mainSlide = escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*40,0)');
+  const subSlide = escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*24,0)');
   if (mainText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.64+if(lt(t,0.6),(0.6-t)*40,0):fontsize=h*0.06:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.35:boxborderw=16`,
+      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.64+${mainSlide}:fontsize=h*0.06:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.35:boxborderw=16`,
     );
   }
   if (subText) {
     filters.push(
-      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.75+if(lt(t,0.6),(0.6-t)*24,0):fontsize=h*0.035:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.3:boxborderw=12`,
+      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.75+${subSlide}:fontsize=h*0.035:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.3:boxborderw=12`,
     );
   }
   return filters;

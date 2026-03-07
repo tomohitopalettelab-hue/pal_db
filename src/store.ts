@@ -81,6 +81,18 @@ export type ServiceSubscriptionRecord = {
   updatedAt: string;
 };
 
+export type PalVideoJobRecord = {
+  id: string;
+  paletteId: string;
+  planCode: string;
+  status: string;
+  payload: Record<string, unknown>;
+  previewUrl: string | null;
+  youtubeUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Row = Record<string, unknown>;
 
 let initialized = false;
@@ -266,6 +278,18 @@ const normalizeServiceSubscription = (row: Row): ServiceSubscriptionRecord => ({
   status: asString(row.status, 'active'),
   startDate: toDateOnly(row.start_date),
   endDate: row.end_date ? toDateOnly(row.end_date) : null,
+  createdAt: toIso(row.created_at),
+  updatedAt: toIso(row.updated_at),
+});
+
+const normalizePalVideoJob = (row: Row): PalVideoJobRecord => ({
+  id: asString(row.id),
+  paletteId: asString(row.palette_id),
+  planCode: asString(row.plan_code),
+  status: asString(row.status, '編集中'),
+  payload: (row.payload || {}) as Record<string, unknown>,
+  previewUrl: asNullableString(row.preview_url),
+  youtubeUrl: asNullableString(row.youtube_url),
   createdAt: toIso(row.created_at),
   updatedAt: toIso(row.updated_at),
 });
@@ -470,6 +494,20 @@ export const ensureTables = async () => {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS pal_video_jobs (
+      id TEXT PRIMARY KEY,
+      palette_id TEXT NOT NULL,
+      plan_code TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT '編集中',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      preview_url TEXT,
+      youtube_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS account_status_options (
       id TEXT PRIMARY KEY,
       value TEXT NOT NULL UNIQUE,
@@ -488,6 +526,9 @@ export const ensureTables = async () => {
   await sql`CREATE INDEX IF NOT EXISTS contracts_phase_idx ON contracts (phase)`;
   await sql`CREATE INDEX IF NOT EXISTS service_subscriptions_account_id_idx ON service_subscriptions (account_id)`;
   await sql`CREATE INDEX IF NOT EXISTS service_subscriptions_service_key_idx ON service_subscriptions (service_key)`;
+  await sql`CREATE INDEX IF NOT EXISTS pal_video_jobs_palette_id_idx ON pal_video_jobs (palette_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS pal_video_jobs_status_idx ON pal_video_jobs (status)`;
+  await sql`CREATE INDEX IF NOT EXISTS pal_video_jobs_updated_at_idx ON pal_video_jobs (updated_at)`;
   await sql`CREATE INDEX IF NOT EXISTS contract_options_type_active_idx ON contract_options (option_type, is_active, sort_order, updated_at)`;
   await sql`CREATE INDEX IF NOT EXISTS account_status_options_active_idx ON account_status_options (is_active, sort_order, updated_at)`;
 
@@ -1018,6 +1059,146 @@ export const upsertServiceSubscription = async (input: Partial<ServiceSubscripti
   `;
 
   return normalizeServiceSubscription(result.rows[0] as Row);
+};
+
+export const listPalVideoJobs = async (options?: { paletteId?: string; status?: string; limit?: number }) => {
+  await ensureTables();
+
+  const paletteId = options?.paletteId?.trim();
+  const status = options?.status?.trim();
+  const limit = Number(options?.limit || 0);
+
+  if (paletteId) {
+    if (status) {
+      const result = limit > 0
+        ? await sql`
+            SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+            FROM pal_video_jobs
+            WHERE palette_id = ${paletteId} AND status = ${status}
+            ORDER BY updated_at DESC
+            LIMIT ${limit}
+          `
+        : await sql`
+            SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+            FROM pal_video_jobs
+            WHERE palette_id = ${paletteId} AND status = ${status}
+            ORDER BY updated_at DESC
+          `;
+      return result.rows.map((row: unknown) => normalizePalVideoJob(row as Row));
+    }
+
+    const result = limit > 0
+      ? await sql`
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE palette_id = ${paletteId}
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `
+      : await sql`
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE palette_id = ${paletteId}
+          ORDER BY updated_at DESC
+        `;
+    return result.rows.map((row: unknown) => normalizePalVideoJob(row as Row));
+  }
+
+  if (status) {
+    const result = limit > 0
+      ? await sql`
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE status = ${status}
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `
+      : await sql`
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE status = ${status}
+          ORDER BY updated_at DESC
+        `;
+    return result.rows.map((row: unknown) => normalizePalVideoJob(row as Row));
+  }
+
+  const result = limit > 0
+    ? await sql`
+        SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+        FROM pal_video_jobs
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `
+    : await sql`
+        SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+        FROM pal_video_jobs
+        ORDER BY updated_at DESC
+      `;
+  return result.rows.map((row: unknown) => normalizePalVideoJob(row as Row));
+};
+
+export const getPalVideoJob = async (id: string): Promise<PalVideoJobRecord | null> => {
+  await ensureTables();
+  const jobId = asString(id).trim();
+  if (!jobId) return null;
+  const result = await sql`
+    SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+    FROM pal_video_jobs
+    WHERE id = ${jobId}
+    LIMIT 1
+  `;
+  if (!result.rows?.[0]) return null;
+  return normalizePalVideoJob(result.rows[0] as Row);
+};
+
+export const upsertPalVideoJob = async (
+  input: Partial<PalVideoJobRecord> & { payload?: Record<string, unknown> },
+): Promise<PalVideoJobRecord> => {
+  await ensureTables();
+
+  const id = asString(input.id, generateId('pv'));
+  const paletteId = normalizePaletteId(input.paletteId);
+  const planCode = asString(input.planCode, 'pal_video_lite').trim();
+  const status = asString(input.status, '編集中').trim();
+  const payload = (input.payload || input.payload === null) ? (input.payload || {}) : {};
+  const previewUrl = asNullableString(input.previewUrl);
+  const youtubeUrl = asNullableString(input.youtubeUrl);
+  const updatedAt = toIso(input.updatedAt || new Date());
+
+  const result = await sql`
+    INSERT INTO pal_video_jobs (
+      id,
+      palette_id,
+      plan_code,
+      status,
+      payload,
+      preview_url,
+      youtube_url,
+      updated_at
+    )
+    VALUES (
+      ${id},
+      ${paletteId},
+      ${planCode},
+      ${status},
+      ${JSON.stringify(payload)}::jsonb,
+      ${previewUrl},
+      ${youtubeUrl},
+      ${updatedAt}::timestamptz
+    )
+    ON CONFLICT (id)
+    DO UPDATE SET
+      palette_id = EXCLUDED.palette_id,
+      plan_code = EXCLUDED.plan_code,
+      status = EXCLUDED.status,
+      payload = EXCLUDED.payload,
+      preview_url = EXCLUDED.preview_url,
+      youtube_url = EXCLUDED.youtube_url,
+      updated_at = EXCLUDED.updated_at
+    RETURNING id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+  `;
+
+  return normalizePalVideoJob(result.rows[0] as Row);
 };
 
 export const getPaletteSummary = async (paletteId: string, activeOn?: string) => {

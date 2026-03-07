@@ -20,14 +20,17 @@ import {
   listContracts,
   listContractOptions,
   listPlans,
+  listPalVideoJobs,
   listServiceSubscriptions,
   upsertAccountStatusOption,
   upsertAccount,
   upsertContract,
   upsertContractOption,
   upsertPlan,
+  upsertPalVideoJob,
   upsertServiceSubscription,
   verifyChatLogin,
+  getPalVideoJob,
 } from './store.js';
 
 dotenv.config();
@@ -268,6 +271,42 @@ app.get('/api/service-subscriptions', async (req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ success: false, error: 'failed to list services' });
+  }
+});
+
+app.get('/api/pal-video/jobs', async (req: Request, res: Response) => {
+  try {
+    const paletteId = String(req.query.paletteId || '').trim() || undefined;
+    const status = String(req.query.status || '').trim() || undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const jobs = await listPalVideoJobs({ paletteId, status, limit });
+    return res.json({ success: true, jobs });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to list pal_video jobs' });
+  }
+});
+
+app.get('/api/pal-video/jobs/:id', async (req: Request, res: Response) => {
+  try {
+    const jobId = String(req.params.id || '').trim();
+    if (!jobId) return res.status(400).json({ success: false, error: 'id is required' });
+    const job = await getPalVideoJob(jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'job not found' });
+    return res.json({ success: true, job });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to get pal_video job' });
+  }
+});
+
+app.post('/api/pal-video/jobs', async (req: Request, res: Response) => {
+  try {
+    const job = await upsertPalVideoJob(req.body || {});
+    return res.json({ success: true, job });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'failed to save pal_video job';
+    return res.status(400).json({ success: false, error: message });
   }
 });
 

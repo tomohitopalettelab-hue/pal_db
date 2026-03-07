@@ -949,6 +949,16 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
     }
 
     const modifications = buildCreatomateModifications(plan);
+    const modificationSummary = {
+      count: modifications.length,
+      ids: modifications.map((item) => item.id),
+      sample: modifications.slice(0, 6),
+    };
+    console.log('[pal-db] creatomate render request', {
+      jobId,
+      templateId,
+      modificationSummary,
+    });
     const response = await fetch(CREATOMATE_API_URL, {
       method: 'POST',
       headers: {
@@ -962,6 +972,11 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
     });
 
     const data = await response.json().catch(() => ({}));
+    console.log('[pal-db] creatomate render response', {
+      jobId,
+      status: response.status,
+      data,
+    });
     if (!response.ok) {
       return res.status(502).json({ success: false, error: data?.error || 'creatomate render failed' });
     }

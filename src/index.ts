@@ -4,10 +4,8 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
-import { spawn } from 'child_process';
-import { existsSync, mkdirSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import {
   deleteAccountStatusOption,
@@ -163,129 +161,10 @@ const getPublicBaseUrl = (req: Request): string => {
   return host ? `${proto}://${host}` : '';
 };
 
-const parseResolution = (raw?: string | null) => {
-  const match = String(raw || '').match(/(\d+)\s*x\s*(\d+)/i);
-  const width = match ? Number(match[1]) : 1080;
-  const height = match ? Number(match[2]) : 1920;
-  return {
-    width: Number.isFinite(width) ? width : 1080,
-    height: Number.isFinite(height) ? height : 1920,
-  };
-};
-
-const escapeDrawtext = (raw: string) => {
-  return String(raw || '')
-    .replace(/\\/g, '\\\\')
-    .replace(/:/g, '\\:')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, '\\n');
-};
-
-const runFfmpeg = async (args: string[]) => {
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    proc.stderr.on('data', (data) => {
-      stderr += String(data || '');
-    });
-    proc.on('error', (error) => reject(error));
-    proc.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr || `ffmpeg exited with ${code}`));
-    });
-  });
-};
-
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const DOWNLOAD_TIMEOUT_MS = 8000;
-
-const downloadImage = async (url: string, dir: string): Promise<string | null> => {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!response.ok) return null;
-    const contentLength = Number(response.headers.get('content-length') || 0);
-    if (contentLength && contentLength > MAX_IMAGE_BYTES) return null;
-    const contentType = response.headers.get('content-type') || '';
-    const extension = contentType.includes('png') ? 'png' : 'jpg';
-    const name = `pal-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
-    const filePath = path.join(dir, name);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.byteLength > MAX_IMAGE_BYTES) return null;
-    await fs.writeFile(filePath, buffer);
-    return filePath;
-  } catch (error) {
-    console.error('[pal-db] image download failed', error);
-    return null;
-  }
-};
-
-const resolveFontFile = () => {
-  const candidates = [
-    process.env.PAL_VIDEO_FONT_FILE?.trim(),
-    '/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf',
-    '/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf',
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-    '/usr/share/fonts/truetype/noto/NotoSansCJKjp-Regular.otf',
-    '/usr/share/fonts/truetype/noto/NotoSansJP-Regular.otf',
-    '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-  ].filter(Boolean) as string[];
-  const found = candidates.find((candidate) => existsSync(candidate));
-  return found || '';
-};
-
-const FONT_FILE = resolveFontFile();
-const FONT_FAMILY = 'Noto Sans CJK JP';
 const CREATOMATE_API_URL = 'https://api.creatomate.com/v2/renders';
 const CREATOMATE_API_KEY = String(process.env.CREATOMATE_API_KEY || '').trim();
 const CREATOMATE_TEMPLATE_ID = String(process.env.CREATOMATE_TEMPLATE_ID || '').trim();
 
-const escapeFfmpegExpr = (expr: string) => expr.replace(/,/g, '\\,');
-
-const buildDrawtextFilters = (
-  mainText: string,
-  subText: string,
-  durationSec: number,
-  animation: string,
-  transition: string,
-) => {
-  const filters: string[] = [];
-  const fontPart = FONT_FILE
-    ? `:fontfile=${FONT_FILE}`
-    : `:font=${FONT_FAMILY}`;
-  const fadeIn = 0.35;
-  const fadeOut = 0.35;
-  const safeAnimation = String(animation || '').toLowerCase();
-  const safeTransition = String(transition || '').toLowerCase();
-  const useFade = safeTransition !== 'none';
-  const useSlide = safeAnimation === 'slide';
-  const useFloat = safeAnimation === 'float';
-  const usePop = safeAnimation === 'pop';
-  const baseAlpha = useFade
-    ? escapeFfmpegExpr(
-        `if(lt(t,${fadeIn}),t/${fadeIn},if(lt(t,${Math.max(durationSec - fadeOut, fadeIn)}),1,((${durationSec}-t)/${fadeOut})))`,
-      )
-    : '1';
-  const mainSlide = useSlide ? escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*40,0)') : '0';
-  const subSlide = useSlide ? escapeFfmpegExpr('if(lt(t,0.6),(0.6-t)*24,0)') : '0';
-  const mainFloat = useFloat ? escapeFfmpegExpr('sin(t*2*PI/3)*6') : '0';
-  const subFloat = useFloat ? escapeFfmpegExpr('sin(t*2*PI/3)*4') : '0';
-  const mainFontScale = usePop ? escapeFfmpegExpr('1+0.06*exp(-t*6)') : '1';
-  const subFontScale = usePop ? escapeFfmpegExpr('1+0.04*exp(-t*6)') : '1';
-  if (mainText) {
-    filters.push(
-      `drawtext=text='${escapeDrawtext(mainText)}'${fontPart}:x=(w-text_w)/2:y=h*0.64+${mainSlide}+${mainFloat}:fontsize=h*0.06*${mainFontScale}:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.35:boxborderw=16`,
-    );
-  }
-  if (subText) {
-    filters.push(
-      `drawtext=text='${escapeDrawtext(subText)}'${fontPart}:x=(w-text_w)/2:y=h*0.75+${subSlide}+${subFloat}:fontsize=h*0.035*${subFontScale}:fontcolor=white:alpha=${baseAlpha}:box=1:boxcolor=black@0.3:boxborderw=12`,
-    );
-  }
-  return filters;
-};
 
 const PAL_VIDEO_TEMPLATE_MAP: Record<string, string> = {
   instagram_feed: 'a02095a2-9469-4f52-9bcd-66fc884453a1',
@@ -374,59 +253,37 @@ const buildCreatomateModifications = (plan: Record<string, unknown>) => {
   return modifications;
 };
 
-const MAX_VIDEO_BYTES = 160 * 1024 * 1024;
-
-const downloadVideo = async (url: string, dir: string): Promise<string | null> => {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS * 2);
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!response.ok) return null;
-    const contentLength = Number(response.headers.get('content-length') || 0);
-    if (contentLength && contentLength > MAX_VIDEO_BYTES) return null;
-    const name = `pal-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`;
-    const filePath = path.join(dir, name);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.byteLength > MAX_VIDEO_BYTES) return null;
-    await fs.writeFile(filePath, buffer);
-    return filePath;
-  } catch (error) {
-    console.error('[pal-db] video download failed', error);
-    return null;
-  }
+const resolveCreatomateTemplateId = (plan: Record<string, unknown>) => {
+  const fromPlan = String(plan?.templateId || '').trim();
+  const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
+  const fromScene = scenes
+    .map((scene: any) => String(scene?.templateId || '').trim())
+    .find((value) => value.length > 0);
+  if (fromScene && (!fromPlan || fromPlan === 'pal_video_fixed_v1')) return fromScene;
+  if (fromPlan) return fromPlan;
+  return fromScene || String(CREATOMATE_TEMPLATE_ID || '').trim();
 };
 
-const buildCreatomateSceneModifications = (
-  scene: Record<string, unknown>,
-  style: Record<string, unknown>,
-  audio: Record<string, unknown>,
-) => {
-  const modifications: Array<{ id: string; source?: string; text?: string; color?: string; value?: string }> = [];
-  const bg = String(scene?.imageUrl || '').trim();
-  const title = String(scene?.title || '').trim();
-  const sub = String(scene?.subtitle || '').trim();
-  if (bg) modifications.push({ id: 'scene_01', source: bg });
-  if (title) modifications.push({ id: 'scene_01_title', text: title });
-  if (sub) modifications.push({ id: 'scene_01_sub', text: sub });
-  if (scene?.durationSec) {
-    modifications.push({ id: 'scene_01_duration', value: String(scene.durationSec) });
+const renderCreatomateJob = async (req: Request, job: any) => {
+  const payload = (job.payload || {}) as Record<string, unknown>;
+  const plan = (payload?.creatomatePlan as Record<string, unknown> | undefined) || buildCreatomateFallbackPlan(payload);
+  const templateId = resolveCreatomateTemplateId(plan);
+  if (!templateId) {
+    throw new Error('CREATOMATE_TEMPLATE_ID is missing');
   }
 
-  const primary = String(style?.primaryColor || '').trim();
-  const accent = String(style?.accentColor || '').trim();
-  if (primary) modifications.push({ id: 'accent_primary', color: primary });
-  if (accent) modifications.push({ id: 'accent_secondary', color: accent });
+  const modifications = buildCreatomateModifications(plan);
+  const modificationSummary = {
+    count: modifications.length,
+    ids: modifications.map((item) => item.id),
+    sample: modifications.slice(0, 6),
+  };
+  console.log('[pal-db] creatomate render request', {
+    jobId: job.id,
+    templateId,
+    modificationSummary,
+  });
 
-  const bgm = String(audio?.bgm || '').trim();
-  if (bgm.startsWith('http')) {
-    modifications.push({ id: 'bgm_track', source: bgm });
-  }
-
-  return modifications;
-};
-
-const renderCreatomateScene = async (templateId: string, modifications: unknown[]) => {
   const response = await fetch(CREATOMATE_API_URL, {
     method: 'POST',
     headers: {
@@ -440,49 +297,36 @@ const renderCreatomateScene = async (templateId: string, modifications: unknown[
   });
 
   const data = await response.json().catch(() => ({}));
+  console.log('[pal-db] creatomate render response', {
+    jobId: job.id,
+    status: response.status,
+    data,
+  });
   if (!response.ok) {
     throw new Error(data?.error || 'creatomate render failed');
   }
 
   const renderItem = Array.isArray(data) ? data[0] : data?.render || data;
   const renderId = String(renderItem?.id || renderItem?.render_id || '').trim();
-  const previewUrl = String(renderItem?.url || '').trim();
-  if (!previewUrl) {
-    throw new Error('creatomate render url missing');
-  }
-  return { renderId, previewUrl };
-};
+  const previewUrl = String(renderItem?.url || '').trim() || null;
+  const nextStatus = job.status === '承認済' ? job.status : '確認中';
 
-const concatVideoFiles = async (files: string[], outputPath: string) => {
-  if (files.length === 1) {
-    await fs.copyFile(files[0], outputPath);
-    return;
-  }
-  const listPath = path.join(path.dirname(outputPath), `concat-${Date.now()}.txt`);
-  const listContent = files
-    .map((file) => `file '${file.replace(/'/g, "'\\''")}'`)
-    .join('\n');
-  await fs.writeFile(listPath, listContent);
-  try {
-    await runFfmpeg([
-      '-y',
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-f', 'concat',
-      '-safe', '0',
-      '-i', listPath,
-      '-c:v', 'libx264',
-      '-r', '24',
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      outputPath,
-    ]);
-  } finally {
-    if (existsSync(listPath)) {
-      unlinkSync(listPath);
-    }
-  }
+  const updated = await upsertPalVideoJob({
+    id: job.id,
+    paletteId: job.paletteId,
+    planCode: job.planCode,
+    status: nextStatus,
+    payload: {
+      ...payload,
+      creatomatePlan: plan,
+      creatomateTemplateId: templateId,
+      creatomateRenderId: renderId,
+    },
+    previewUrl,
+    youtubeUrl: job.youtubeUrl,
+  });
+
+  return { updated, renderId, previewUrl };
 };
 
 app.get('/admin', (_req: Request, res: Response) => {
@@ -806,252 +650,18 @@ app.post('/api/pal-video/jobs', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/pal-video/ffmpeg-check', async (_req: Request, res: Response) => {
-  try {
-    await runFfmpeg(['-version']);
-    return res.json({ success: true, installed: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'ffmpeg check failed';
-    return res.status(500).json({ success: false, installed: false, error: message });
-  }
-});
-
 app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
   try {
+    if (!CREATOMATE_API_KEY) {
+      return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
+    }
     const jobId = String(req.body?.jobId || '').trim();
     if (!jobId) return res.status(400).json({ success: false, error: 'jobId is required' });
 
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
-
-    const payload = (job.payload || {}) as Record<string, unknown>;
-    const rawResolution = parseResolution(String(payload?.resolution || '1080x1920'));
-    const maxPreviewWidth = 720;
-    const scaleRatio = rawResolution.width > maxPreviewWidth
-      ? maxPreviewWidth / rawResolution.width
-      : 1;
-    const resolution = {
-      width: Math.round(rawResolution.width * scaleRatio),
-      height: Math.round(rawResolution.height * scaleRatio),
-    };
-    const colorPrimary = String(payload?.colorPrimary || '#E95464').trim() || '#E95464';
-    const imageUrls = Array.isArray(payload?.imageUrls) ? payload.imageUrls : [];
-    const templateId = String(payload?.templateId || '').trim();
-    const rawCuts = Array.isArray(payload?.cuts) ? payload.cuts : [];
-    const allowedTransitions = new Set(['fade', 'none']);
-    const normalizeTransition = (value: unknown) => {
-      const next = String(value || '').toLowerCase();
-      return allowedTransitions.has(next) ? next : 'none';
-    };
-    const normalizeAnimation = (value: unknown) => {
-      const next = String(value || '').toLowerCase();
-      if (next === 'none' || next === 'fade' || next === 'slide' || next === 'float' || next === 'pop') return next;
-      return 'none';
-    };
-    const cuts = rawCuts
-      .map((cut) => ({
-        durationSec: Math.max(1, Math.round(Number((cut as Record<string, unknown>)?.durationSec || 0) || 0)),
-        imageUrl: String((cut as Record<string, unknown>)?.imageUrl || '').trim(),
-        textMain: String((cut as Record<string, unknown>)?.textMain || '').trim(),
-        textSub: String((cut as Record<string, unknown>)?.textSub || '').trim(),
-        textTransition: normalizeTransition((cut as Record<string, unknown>)?.textTransition),
-        textAnimation: normalizeAnimation((cut as Record<string, unknown>)?.textAnimation),
-      }))
-      .filter((cut) => cut.durationSec > 0);
-
-    const outputDir = path.join(publicDir, 'pal-video');
-    await fs.mkdir(outputDir, { recursive: true });
-    const outputName = `${jobId}.mp4`;
-    const outputPath = path.join(outputDir, outputName);
-    const tempOutputPath = path.join(tmpdir(), `pal-video-${jobId}.mp4`);
-
-    const tempDir = path.join(tmpdir(), 'pal-video');
-    await fs.mkdir(tempDir, { recursive: true });
-    const templates = new Map<string, { label: string; durationSec: number; scenes: number }>([
-      ['modern_15', { label: 'Modern: シンプル & クリーン', durationSec: 15, scenes: 4 }],
-      ['pop_15', { label: 'Pop: 元気 & 親しみ', durationSec: 15, scenes: 4 }],
-      ['corporate_30', { label: 'Corporate: 信頼と実績', durationSec: 30, scenes: 7 }],
-      ['elegant_30', { label: 'Elegant: ラグジュアリー', durationSec: 30, scenes: 7 }],
-    ]);
-
-    const resolvedTemplate = templates.get(templateId) || templates.get('modern_15')!;
-    const hasCuts = cuts.length > 0;
-    const durationSec = hasCuts
-      ? cuts.reduce((sum, cut) => sum + cut.durationSec, 0)
-      : Math.min(Number(payload?.durationSec || resolvedTemplate.durationSec) || resolvedTemplate.durationSec, resolvedTemplate.durationSec);
-    const sceneCount = hasCuts ? cuts.length : resolvedTemplate.scenes;
-    const baseSceneSeconds = Math.floor(durationSec / sceneCount);
-    const remainder = durationSec - baseSceneSeconds * sceneCount;
-    const sceneDurations = hasCuts
-      ? cuts.map((cut) => cut.durationSec)
-      : Array.from({ length: sceneCount }).map((_, index) => baseSceneSeconds + (index < remainder ? 1 : 0));
-
-    const hearingAnswers = Array.isArray(payload?.hearingAnswers) ? payload.hearingAnswers : [];
-    const hearingQueue = [...hearingAnswers];
-    const pickAnswerText = () => {
-      const next = hearingQueue.shift();
-      return next?.a ? String(next.a) : '';
-    };
-    const purposeText = String(payload?.purpose || '用途未設定');
-    const telopMainText = String(payload?.telopMain || '').trim() || 'テロップ未設定';
-    const telopSubText = String(payload?.telopSub || '').trim() || 'サブテロップ未設定';
-
-    const fallbackTexts = Array.from({ length: sceneCount }).map((_, index) => {
-      if (index === 0) return { main: telopMainText, sub: telopSubText };
-      if (index === sceneCount - 1) return { main: 'お問い合わせはこちら', sub: 'ご相談お待ちしています' };
-      if (index === 1) return { main: `用途: ${purposeText}`, sub: '' };
-      const answer = pickAnswerText();
-      return { main: answer || `ポイント${index}`, sub: '' };
-    });
-
-    const sceneTexts = hasCuts
-      ? cuts.map((cut, index) => ({
-          main: cut.textMain || fallbackTexts[index]?.main || '',
-          sub: cut.textSub || fallbackTexts[index]?.sub || '',
-        }))
-      : fallbackTexts;
-
-    console.log('[pal-db] pal-video generate start', {
-      jobId,
-      durationSec,
-      resolution,
-      templateId: resolvedTemplate.label,
-      sceneCount,
-      hasImage: imageUrls.length > 0,
-      fontFile: FONT_FILE || null,
-    });
-
-    const downloadedImages: (string | null)[] = [];
-    if (hasCuts) {
-      for (const cut of cuts) {
-        const url = cut.imageUrl;
-        if (!url) {
-          downloadedImages.push(null);
-          continue;
-        }
-        const downloaded = await downloadImage(String(url), tempDir);
-        downloadedImages.push(downloaded);
-      }
-    } else {
-      for (const url of imageUrls) {
-        const downloaded = await downloadImage(String(url), tempDir);
-        if (downloaded) downloadedImages.push(downloaded);
-      }
-    }
-
-    const sceneFiles: string[] = [];
-    for (let i = 0; i < sceneCount; i += 1) {
-      const sceneDuration = sceneDurations[i];
-      const imagePath = hasCuts
-        ? downloadedImages[i]
-        : (downloadedImages.length > 0 ? downloadedImages[i % downloadedImages.length] : null);
-      const baseFilters: string[] = [];
-      if (imagePath) {
-        baseFilters.push(`scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=increase`);
-        baseFilters.push(`crop=${resolution.width}:${resolution.height}`);
-      }
-      baseFilters.push('format=yuv420p');
-      const animation = hasCuts ? cuts[i]?.textAnimation : 'slide';
-      const transition = hasCuts ? cuts[i]?.textTransition : 'fade';
-      const drawtextFilters = buildDrawtextFilters(
-        sceneTexts[i].main,
-        sceneTexts[i].sub,
-        sceneDuration,
-        animation,
-        transition,
-      );
-      const vf = [...baseFilters, ...drawtextFilters].join(',');
-      const sceneFile = path.join(tempDir, `scene-${jobId}-${i}.mp4`);
-
-      const args = imagePath
-        ? [
-            '-y',
-            '-hide_banner',
-            '-loglevel', 'error',
-            '-loop', '1',
-            '-i', imagePath,
-            '-t', String(sceneDuration),
-            '-vf', vf,
-            '-r', '24',
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-threads', '1',
-            '-pix_fmt', 'yuv420p',
-            sceneFile,
-          ]
-        : [
-            '-y',
-            '-hide_banner',
-            '-loglevel', 'error',
-            '-f', 'lavfi',
-            '-i', `color=c=${colorPrimary}:s=${resolution.width}x${resolution.height}:d=${sceneDuration}`,
-            '-vf', vf,
-            '-r', '24',
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-threads', '1',
-            '-pix_fmt', 'yuv420p',
-            sceneFile,
-          ];
-
-      await runFfmpeg(args);
-      sceneFiles.push(sceneFile);
-    }
-
-    if (sceneFiles.length === 1) {
-      await fs.copyFile(sceneFiles[0], tempOutputPath);
-    } else {
-      const transitionSec = 0.4;
-      const inputArgs = sceneFiles.flatMap((file) => ['-i', file]);
-      let filter = '';
-      let currentLabel = '[0:v]';
-      let timeline = sceneDurations[0];
-      for (let i = 0; i < sceneFiles.length - 1; i += 1) {
-        const nextLabel = `[${i + 1}:v]`;
-        const outputLabel = `[vxf${i + 1}]`;
-        const offset = Math.max(timeline - transitionSec, 0);
-        filter += `${currentLabel}${nextLabel}xfade=transition=fade:duration=${transitionSec}:offset=${offset}${outputLabel};`;
-        currentLabel = outputLabel;
-        timeline += sceneDurations[i + 1] - transitionSec;
-      }
-      filter += `${currentLabel}format=yuv420p[vid]`;
-
-      await runFfmpeg([
-        '-y',
-        '-hide_banner',
-        '-loglevel', 'error',
-        ...inputArgs,
-        '-filter_complex', filter,
-        '-map', '[vid]',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-threads', '1',
-        '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart',
-        tempOutputPath,
-      ]);
-    }
-
-    await fs.rename(tempOutputPath, outputPath).catch(async () => {
-      await fs.copyFile(tempOutputPath, outputPath);
-      await fs.unlink(tempOutputPath).catch(() => undefined);
-    });
-
-    console.log('[pal-db] pal-video generate done', { jobId, outputName });
-
-    const previewUrl = `${getPublicBaseUrl(req)}/pal-video/${encodeURIComponent(outputName)}`;
-    const nextStatus = job.status === '承認済' ? job.status : '確認中';
-    const updated = await upsertPalVideoJob({
-      id: job.id,
-      paletteId: job.paletteId,
-      planCode: job.planCode,
-      status: nextStatus,
-      payload: job.payload,
-      previewUrl,
-      youtubeUrl: job.youtubeUrl,
-    });
-
-    return res.json({ success: true, job: updated });
+    const result = await renderCreatomateJob(req, job);
+    return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
   } catch (error) {
     console.error('[pal-db] pal-video generate failed', error);
     const message = error instanceof Error ? error.message : 'failed to generate pal_video';
@@ -1069,124 +679,8 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
 
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
-
-    const payload = (job.payload || {}) as Record<string, unknown>;
-    const plan = (payload?.creatomatePlan as Record<string, unknown> | undefined) || buildCreatomateFallbackPlan(payload);
-    const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
-    const templateMode = String(plan?.templateMode || '').trim().toLowerCase();
-    const hasPerSceneTemplate = scenes.some((scene: any) => Boolean(scene?.templateId));
-    const useDynamic = templateMode === 'dynamic' && scenes.length > 0 && hasPerSceneTemplate;
-
-    if (useDynamic) {
-      const outputDir = path.join(publicDir, 'pal-video');
-      await fs.mkdir(outputDir, { recursive: true });
-      const tempDir = path.join(tmpdir(), `pal-video-creatomate-${jobId}`);
-      await fs.mkdir(tempDir, { recursive: true });
-      const outputName = `${jobId}-dynamic.mp4`;
-      const outputPath = path.join(outputDir, outputName);
-      const renderIds: string[] = [];
-      const sceneFiles: string[] = [];
-
-      for (const scene of scenes.slice(0, 7)) {
-        const sceneTemplateId = String(scene?.templateId || plan?.templateId || CREATOMATE_TEMPLATE_ID || '').trim();
-        if (!sceneTemplateId) {
-          return res.status(500).json({ success: false, error: 'CREATOMATE_TEMPLATE_ID is missing' });
-        }
-        const modifications = buildCreatomateSceneModifications(
-          scene as Record<string, unknown>,
-          (plan?.style || {}) as Record<string, unknown>,
-          (plan?.audio || {}) as Record<string, unknown>,
-        );
-        const { renderId, previewUrl } = await renderCreatomateScene(sceneTemplateId, modifications);
-        renderIds.push(renderId);
-        const downloaded = await downloadVideo(previewUrl, tempDir);
-        if (!downloaded) {
-          return res.status(502).json({ success: false, error: 'creatomate clip download failed' });
-        }
-        sceneFiles.push(downloaded);
-      }
-
-      await concatVideoFiles(sceneFiles, outputPath);
-      const previewUrl = `${getPublicBaseUrl(req)}/pal-video/${encodeURIComponent(outputName)}`;
-      const nextStatus = job.status === '承認済' ? job.status : '確認中';
-      const updated = await upsertPalVideoJob({
-        id: job.id,
-        paletteId: job.paletteId,
-        planCode: job.planCode,
-        status: nextStatus,
-        payload: {
-          ...payload,
-          creatomatePlan: plan,
-          creatomateTemplateId: String(plan?.templateId || CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'),
-          creatomateRenderId: renderIds[0] || '',
-          creatomateRenderIds: renderIds,
-        },
-        previewUrl,
-        youtubeUrl: job.youtubeUrl,
-      });
-
-      return res.json({ success: true, job: updated, renderId: renderIds[0] || '', previewUrl });
-    }
-
-    const templateId = String(plan?.templateId || CREATOMATE_TEMPLATE_ID || '').trim();
-    if (!templateId) {
-      return res.status(500).json({ success: false, error: 'CREATOMATE_TEMPLATE_ID is missing' });
-    }
-
-    const modifications = buildCreatomateModifications(plan);
-    const modificationSummary = {
-      count: modifications.length,
-      ids: modifications.map((item) => item.id),
-      sample: modifications.slice(0, 6),
-    };
-    console.log('[pal-db] creatomate render request', {
-      jobId,
-      templateId,
-      modificationSummary,
-    });
-    const response = await fetch(CREATOMATE_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${CREATOMATE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        template_id: templateId,
-        modifications,
-      }),
-    });
-
-    const data = await response.json().catch(() => ({}));
-    console.log('[pal-db] creatomate render response', {
-      jobId,
-      status: response.status,
-      data,
-    });
-    if (!response.ok) {
-      return res.status(502).json({ success: false, error: data?.error || 'creatomate render failed' });
-    }
-
-    const renderItem = Array.isArray(data) ? data[0] : data?.render || data;
-    const renderId = String(renderItem?.id || renderItem?.render_id || '').trim();
-    const previewUrl = String(renderItem?.url || '').trim() || null;
-    const nextStatus = job.status === '承認済' ? job.status : '確認中';
-
-    const updated = await upsertPalVideoJob({
-      id: job.id,
-      paletteId: job.paletteId,
-      planCode: job.planCode,
-      status: nextStatus,
-      payload: {
-        ...payload,
-        creatomatePlan: plan,
-        creatomateTemplateId: templateId,
-        creatomateRenderId: renderId,
-      },
-      previewUrl,
-      youtubeUrl: job.youtubeUrl,
-    });
-
-    return res.json({ success: true, job: updated, renderId, previewUrl });
+    const result = await renderCreatomateJob(req, job);
+    return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
   } catch (error) {
     console.error('[pal-db] pal-video render failed', error);
     const message = error instanceof Error ? error.message : 'failed to render pal_video';

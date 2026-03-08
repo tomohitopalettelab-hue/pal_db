@@ -600,7 +600,7 @@ app.delete('/api/media/:id', async (req: Request, res: Response) => {
     const filePath = path.join(mediaRootDir, asset.paletteId, asset.fileName);
     if (existsSync(filePath)) {
       try {
-        unlinkSync(filePath);
+        await fs.unlink(filePath);
       } catch (error) {
         console.warn('[pal-db] failed to remove media file', error);
       }

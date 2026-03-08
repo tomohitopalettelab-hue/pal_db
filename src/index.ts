@@ -290,29 +290,34 @@ const buildDrawtextFilters = (
 const buildCreatomateFallbackPlan = (payload: Record<string, unknown>) => {
   const cuts = Array.isArray(payload?.cuts) ? payload.cuts : [];
   const durationSec = Number(payload?.durationSec || 30);
-  const sceneCount = cuts.length > 0 ? cuts.length : Math.max(1, Math.min(7, Math.round(durationSec / 4)));
-  const baseDuration = Math.max(2, Math.round(durationSec / sceneCount));
+  const sceneCount = cuts.length > 0 ? cuts.length : Math.max(1, Math.min(7, Math.ceil(durationSec / 4)));
+  const baseDuration = 4;
+  const lastDuration = Math.max(1, durationSec - baseDuration * (sceneCount - 1));
   const safeCuts = cuts.length > 0
     ? cuts
     : Array.from({ length: sceneCount }).map((_, index) => ({
-        durationSec: baseDuration,
+        durationSec: index === sceneCount - 1 ? lastDuration : baseDuration,
         imageUrl: (payload?.imageUrls as string[] | undefined)?.[index] || (payload?.imageUrls as string[] | undefined)?.[0] || '',
         textMain: index === 0 ? payload?.telopMain : `ポイント${index + 1}`,
         textSub: index === 0 ? payload?.telopSub : '',
-        textAnimation: 'slide',
-        textTransition: 'fade',
+        templateId: 'pal_video_fixed_v1',
+        textAnimation: 'none',
+        textTransition: 'none',
       }));
+
+  const templateMode = safeCuts.some((cut: any) => Boolean(cut?.templateId)) ? 'dynamic' : 'fixed';
 
   return {
     templateId: CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1',
-    templateMode: 'fixed',
+    templateMode,
     scenes: safeCuts.map((cut: any) => ({
       durationSec: Number(cut.durationSec || baseDuration),
       imageUrl: String(cut.imageUrl || ''),
       title: String(cut.textMain || payload?.telopMain || ''),
       subtitle: String(cut.textSub || payload?.telopSub || ''),
-      textAnimation: String(cut.textAnimation || 'slide'),
-      textTransition: String(cut.textTransition || 'fade'),
+      templateId: String(cut.templateId || CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'),
+      textAnimation: String(cut.textAnimation || 'none'),
+      textTransition: String(cut.textTransition || 'none'),
     })),
     style: {
       primaryColor: String(payload?.colorPrimary || '#E95464'),
@@ -354,6 +359,117 @@ const buildCreatomateModifications = (plan: Record<string, unknown>) => {
   }
 
   return modifications;
+};
+
+const MAX_VIDEO_BYTES = 160 * 1024 * 1024;
+
+const downloadVideo = async (url: string, dir: string): Promise<string | null> => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS * 2);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength && contentLength > MAX_VIDEO_BYTES) return null;
+    const name = `pal-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`;
+    const filePath = path.join(dir, name);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_VIDEO_BYTES) return null;
+    await fs.writeFile(filePath, buffer);
+    return filePath;
+  } catch (error) {
+    console.error('[pal-db] video download failed', error);
+    return null;
+  }
+};
+
+const buildCreatomateSceneModifications = (
+  scene: Record<string, unknown>,
+  style: Record<string, unknown>,
+  audio: Record<string, unknown>,
+) => {
+  const modifications: Array<{ id: string; source?: string; text?: string; color?: string; value?: string }> = [];
+  const bg = String(scene?.imageUrl || '').trim();
+  const title = String(scene?.title || '').trim();
+  const sub = String(scene?.subtitle || '').trim();
+  if (bg) modifications.push({ id: 'scene_01', source: bg });
+  if (title) modifications.push({ id: 'scene_01_title', text: title });
+  if (sub) modifications.push({ id: 'scene_01_sub', text: sub });
+  if (scene?.durationSec) {
+    modifications.push({ id: 'scene_01_duration', value: String(scene.durationSec) });
+  }
+
+  const primary = String(style?.primaryColor || '').trim();
+  const accent = String(style?.accentColor || '').trim();
+  if (primary) modifications.push({ id: 'accent_primary', color: primary });
+  if (accent) modifications.push({ id: 'accent_secondary', color: accent });
+
+  const bgm = String(audio?.bgm || '').trim();
+  if (bgm.startsWith('http')) {
+    modifications.push({ id: 'bgm_track', source: bgm });
+  }
+
+  return modifications;
+};
+
+const renderCreatomateScene = async (templateId: string, modifications: unknown[]) => {
+  const response = await fetch(CREATOMATE_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${CREATOMATE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      template_id: templateId,
+      modifications,
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'creatomate render failed');
+  }
+
+  const renderItem = Array.isArray(data) ? data[0] : data?.render || data;
+  const renderId = String(renderItem?.id || renderItem?.render_id || '').trim();
+  const previewUrl = String(renderItem?.url || '').trim();
+  if (!previewUrl) {
+    throw new Error('creatomate render url missing');
+  }
+  return { renderId, previewUrl };
+};
+
+const concatVideoFiles = async (files: string[], outputPath: string) => {
+  if (files.length === 1) {
+    await fs.copyFile(files[0], outputPath);
+    return;
+  }
+  const listPath = path.join(path.dirname(outputPath), `concat-${Date.now()}.txt`);
+  const listContent = files
+    .map((file) => `file '${file.replace(/'/g, "'\\''")}'`)
+    .join('\n');
+  await fs.writeFile(listPath, listContent);
+  try {
+    await runFfmpeg([
+      '-y',
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listPath,
+      '-c:v', 'libx264',
+      '-r', '24',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      outputPath,
+    ]);
+  } finally {
+    if (existsSync(listPath)) {
+      unlinkSync(listPath);
+    }
+  }
 };
 
 app.get('/admin', (_req: Request, res: Response) => {
@@ -712,12 +828,12 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     const allowedTransitions = new Set(['fade', 'none']);
     const normalizeTransition = (value: unknown) => {
       const next = String(value || '').toLowerCase();
-      return allowedTransitions.has(next) ? next : 'fade';
+      return allowedTransitions.has(next) ? next : 'none';
     };
     const normalizeAnimation = (value: unknown) => {
       const next = String(value || '').toLowerCase();
       if (next === 'none' || next === 'fade' || next === 'slide' || next === 'float' || next === 'pop') return next;
-      return 'slide';
+      return 'none';
     };
     const cuts = rawCuts
       .map((cut) => ({
@@ -943,6 +1059,62 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
 
     const payload = (job.payload || {}) as Record<string, unknown>;
     const plan = (payload?.creatomatePlan as Record<string, unknown> | undefined) || buildCreatomateFallbackPlan(payload);
+    const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
+    const templateMode = String(plan?.templateMode || '').trim().toLowerCase();
+    const hasPerSceneTemplate = scenes.some((scene: any) => Boolean(scene?.templateId));
+    const useDynamic = templateMode === 'dynamic' && scenes.length > 0 && hasPerSceneTemplate;
+
+    if (useDynamic) {
+      const outputDir = path.join(publicDir, 'pal-video');
+      await fs.mkdir(outputDir, { recursive: true });
+      const tempDir = path.join(tmpdir(), `pal-video-creatomate-${jobId}`);
+      await fs.mkdir(tempDir, { recursive: true });
+      const outputName = `${jobId}-dynamic.mp4`;
+      const outputPath = path.join(outputDir, outputName);
+      const renderIds: string[] = [];
+      const sceneFiles: string[] = [];
+
+      for (const scene of scenes.slice(0, 7)) {
+        const sceneTemplateId = String(scene?.templateId || plan?.templateId || CREATOMATE_TEMPLATE_ID || '').trim();
+        if (!sceneTemplateId) {
+          return res.status(500).json({ success: false, error: 'CREATOMATE_TEMPLATE_ID is missing' });
+        }
+        const modifications = buildCreatomateSceneModifications(
+          scene as Record<string, unknown>,
+          (plan?.style || {}) as Record<string, unknown>,
+          (plan?.audio || {}) as Record<string, unknown>,
+        );
+        const { renderId, previewUrl } = await renderCreatomateScene(sceneTemplateId, modifications);
+        renderIds.push(renderId);
+        const downloaded = await downloadVideo(previewUrl, tempDir);
+        if (!downloaded) {
+          return res.status(502).json({ success: false, error: 'creatomate clip download failed' });
+        }
+        sceneFiles.push(downloaded);
+      }
+
+      await concatVideoFiles(sceneFiles, outputPath);
+      const previewUrl = `${getPublicBaseUrl(req)}/pal-video/${encodeURIComponent(outputName)}`;
+      const nextStatus = job.status === '承認済' ? job.status : '確認中';
+      const updated = await upsertPalVideoJob({
+        id: job.id,
+        paletteId: job.paletteId,
+        planCode: job.planCode,
+        status: nextStatus,
+        payload: {
+          ...payload,
+          creatomatePlan: plan,
+          creatomateTemplateId: String(plan?.templateId || CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'),
+          creatomateRenderId: renderIds[0] || '',
+          creatomateRenderIds: renderIds,
+        },
+        previewUrl,
+        youtubeUrl: job.youtubeUrl,
+      });
+
+      return res.json({ success: true, job: updated, renderId: renderIds[0] || '', previewUrl });
+    }
+
     const templateId = String(plan?.templateId || CREATOMATE_TEMPLATE_ID || '').trim();
     if (!templateId) {
       return res.status(500).json({ success: false, error: 'CREATOMATE_TEMPLATE_ID is missing' });

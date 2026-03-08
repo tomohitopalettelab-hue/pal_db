@@ -287,12 +287,25 @@ const buildDrawtextFilters = (
   return filters;
 };
 
+const PAL_VIDEO_TEMPLATE_MAP: Record<string, string> = {
+  instagram_feed: 'a02095a2-9469-4f52-9bcd-66fc884453a1',
+  promotion: '516cafa1-15cc-44e3-8a39-af5a07862bc0',
+  youtube: '979f7579-5567-4d7b-a615-777d825d9f9d',
+};
+
+const resolvePalVideoTemplateCandidates = (purpose: string) => {
+  const mapped = PAL_VIDEO_TEMPLATE_MAP[purpose];
+  return [mapped, CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'].filter(Boolean);
+};
+
 const buildCreatomateFallbackPlan = (payload: Record<string, unknown>) => {
   const cuts = Array.isArray(payload?.cuts) ? payload.cuts : [];
   const durationSec = Number(payload?.durationSec || 30);
   const sceneCount = cuts.length > 0 ? cuts.length : Math.max(1, Math.min(7, Math.ceil(durationSec / 4)));
   const baseDuration = 4;
   const lastDuration = Math.max(1, durationSec - baseDuration * (sceneCount - 1));
+  const purpose = String(payload?.purpose || 'instagram_reel');
+  const templateCandidates = resolvePalVideoTemplateCandidates(purpose);
   const safeCuts = cuts.length > 0
     ? cuts
     : Array.from({ length: sceneCount }).map((_, index) => ({
@@ -300,7 +313,7 @@ const buildCreatomateFallbackPlan = (payload: Record<string, unknown>) => {
         imageUrl: (payload?.imageUrls as string[] | undefined)?.[index] || (payload?.imageUrls as string[] | undefined)?.[0] || '',
         textMain: index === 0 ? payload?.telopMain : `ポイント${index + 1}`,
         textSub: index === 0 ? payload?.telopSub : '',
-        templateId: 'pal_video_fixed_v1',
+        templateId: templateCandidates[index % templateCandidates.length],
         textAnimation: 'none',
         textTransition: 'none',
       }));
@@ -315,7 +328,7 @@ const buildCreatomateFallbackPlan = (payload: Record<string, unknown>) => {
       imageUrl: String(cut.imageUrl || ''),
       title: String(cut.textMain || payload?.telopMain || ''),
       subtitle: String(cut.textSub || payload?.telopSub || ''),
-      templateId: String(cut.templateId || CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'),
+      templateId: String(cut.templateId || templateCandidates[0] || CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'),
       textAnimation: String(cut.textAnimation || 'none'),
       textTransition: String(cut.textTransition || 'none'),
     })),

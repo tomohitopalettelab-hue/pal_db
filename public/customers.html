@@ -214,9 +214,9 @@
 
   <main>
     <div class="tabs-shell" id="customerTabs">
+      <button class="tab-button" type="button" data-tab-target="accounts">顧客一覧</button>
       <button class="tab-button" type="button" data-tab-target="create-account">新規顧客作成</button>
       <button class="tab-button" type="button" data-tab-target="plans">プラン追加</button>
-      <button class="tab-button" type="button" data-tab-target="accounts">顧客一覧</button>
     </div>
 
     <section class="card section-customer tab-panel" data-tab-panel="create-account">
@@ -262,7 +262,7 @@
       </div>
       <div class="form-body">
         <div class="grid-form">
-          <div class="form-group"><label>検索</label><input id="searchText" placeholder="paletteId / 顧客名" oninput="applyFilters()" /></div>
+          <div class="form-group"><label>検索（全項目）</label><input id="searchText" placeholder="ID / 顧客名 / 住所 / 連絡先 など" oninput="applyFilters()" /></div>
           <div class="form-group"><label>ステータス絞り込み</label><select id="statusFilter" onchange="applyFilters()"><option value="">全ステータス</option></select></div>
           <div class="form-group"><label>表示件数</label><input id="resultCount" readonly /></div>
           <div class="form-group"><label>操作</label><button class="btn-refresh" onclick="refreshAll()">再読込</button></div>
@@ -385,7 +385,7 @@
           setActiveTab(target);
         });
       });
-      setActiveTab('create-account');
+      setActiveTab('accounts');
     }
 
     function initServiceNav() {
@@ -471,7 +471,22 @@
       const status = document.getElementById('statusFilter').value;
 
       const filtered = allAccounts.filter(a => {
-        const matchesText = !text || `${a.paletteId} ${a.name}`.toLowerCase().includes(text);
+        const fields = [
+          a.paletteId,
+          a.name,
+          a.shopName,
+          a.personName,
+          a.personKana,
+          a.zip,
+          a.address,
+          a.phone,
+          a.mobile,
+          a.contactEmail,
+          a.chatLoginId,
+          a.notes,
+          a.status
+        ].filter(Boolean).join(' ').toLowerCase();
+        const matchesText = !text || fields.includes(text);
         const matchesStatus = !status || a.status === status;
         return matchesText && matchesStatus;
       });

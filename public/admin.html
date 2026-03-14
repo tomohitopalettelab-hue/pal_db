@@ -87,6 +87,30 @@
 
     main { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 2rem; }
 
+    .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 1.6rem; align-items: start; }
+    .side-nav { position: sticky; top: 96px; background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 1rem; box-shadow: 0 10px 20px -16px rgba(15, 23, 42, 0.3); display: grid; gap: 0.65rem; }
+    .side-nav-title { font-size: 0.85rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .side-button {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.7rem 0.9rem;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+    }
+    .side-button:hover { background: #e2e8f0; }
+    .side-button.active { background: var(--primary); color: #fff; border-color: var(--primary); box-shadow: 0 10px 20px -16px rgba(37, 99, 235, 0.8); }
+    .content-area { display: grid; gap: 1.6rem; }
+    .panel-stack { display: grid; gap: 1.6rem; }
+    .inner-section { margin-top: 1.5rem; border-top: 1px solid var(--border); background: #f8fafc; }
+    .inner-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.5rem 0; }
+    .inner-header h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+    .inline-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
     .tabs-shell {
       display: flex;
       flex-wrap: wrap;
@@ -204,6 +228,11 @@
     @media (max-width: 620px) {
       .service-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .side-nav { position: static; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+      .side-nav-title { grid-column: 1 / -1; }
+    }
   </style>
 </head>
 <body>
@@ -220,16 +249,17 @@
   </header>
 
   <main>
-    <div class="tabs-shell" id="adminTabs">
-      <button class="tab-button" type="button" data-tab-target="customer">顧客情報</button>
-      <button class="tab-button" type="button" data-tab-target="plan">プラン管理</button>
-      <button class="tab-button" type="button" data-tab-target="media">アップロード済みメディア</button>
-      <button class="tab-button" type="button" data-tab-target="service-form">サービス詳細</button>
-      <button class="tab-button" type="button" data-tab-target="settings">選択肢設定</button>
-      <button class="tab-button" type="button" data-tab-target="service-list">サービス一覧</button>
-    </div>
+    <div class="layout">
+      <aside class="side-nav" id="adminTabs">
+        <div class="side-nav-title">メニュー</div>
+        <button class="side-button" type="button" data-tab-target="customer">顧客情報</button>
+        <button class="side-button" type="button" data-tab-target="service-form">サービス詳細追加</button>
+        <button class="side-button" type="button" data-tab-target="media">メディア</button>
+        <button class="side-button" type="button" data-tab-target="settings">設定</button>
+      </aside>
 
-    <section class="card section-customer tab-panel" data-tab-panel="customer">
+      <div class="content-area">
+        <section class="card section-customer tab-panel" data-tab-panel="customer">
       <div class="card-header">
         <h2>【顧客情報】</h2>
         <div id="accMeta" class="muted"></div>
@@ -263,24 +293,16 @@
         <div style="flex-grow: 1;"></div>
         <button class="btn-delete" onclick="deleteAccount()">顧客削除</button>
       </div>
-    </section>
-
-    <section class="card section-service tab-panel" data-tab-panel="plan">
-      <div class="card-header">
-        <h2>【プラン】の新規追加</h2>
-      </div>
-      <div class="form-body" style="border-bottom: 1px solid var(--border);">
-        <div class="grid-form">
-          <input id="planEditId" type="hidden" />
-          <div class="form-group"><label>プランコード</label><input id="planCode" placeholder="basic" /></div>
-          <div class="form-group"><label>プラン名</label><input id="planName" placeholder="ベーシック" /></div>
-          <div class="form-group full-width"><label>説明（任意）</label><input id="planDesc" placeholder="プラン説明" /></div>
-          <div class="form-group"><label>標準価格（円）</label><input id="planPrice" type="number" value="0" /></div>
-          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
-            <button class="btn-add" id="plan-save-btn" onclick="savePlan()">このプランを追加する</button>
-            <button class="btn-refresh" id="plan-cancel-btn" style="display:none;" onclick="cancelPlanEdit()">編集をキャンセル</button>
+      <div class="inner-section">
+        <div class="inner-header">
+          <h3>登録済みサービス詳細一覧</h3>
+          <div class="inline-actions">
+            <button class="btn-refresh" type="button" onclick="openSettings('planSettings')">プランを編集</button>
+            <button class="btn-refresh" type="button" onclick="openSettings('phaseSettings')">フェーズを編集</button>
           </div>
-          <div class="full-width"><strong>登録済み契約プラン:</strong> <span id="planMasterList">-</span></div>
+        </div>
+        <div class="table-container">
+          <table id="ctrTable"></table>
         </div>
       </div>
     </section>
@@ -340,68 +362,85 @@
       </div>
     </section>
 
-    <section class="card section-service tab-panel" data-tab-panel="settings">
-      <div class="card-header" style="border-top: 1px solid var(--border);">
-        <h2>フェーズ / ステータス設定</h2>
-      </div>
-      <div class="form-body" style="border-bottom: 1px solid var(--border);">
-        <div class="grid-form">
-          <div class="form-group">
-            <label>フェーズ値</label>
-            <input id="phaseId" type="hidden" />
-            <input id="phaseValue" placeholder="運用中" />
-          </div>
-          <div class="form-group">
-            <label>フェーズ表示名</label>
-            <input id="phaseLabel" placeholder="リード" />
-          </div>
-          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
-            <button class="btn-add" id="phase-save-btn" onclick="addContractOption('phase')">フェーズを追加</button>
-            <button class="btn-refresh" id="phase-cancel-btn" style="display:none;" onclick="cancelContractOptionEdit('phase')">編集をキャンセル</button>
-          </div>
-          <div class="full-width"><strong>登録済みフェーズ:</strong> <span id="phaseOptionsList">-</span></div>
+        <section class="tab-panel" data-tab-panel="settings">
+          <div class="panel-stack">
+            <section class="card section-service" id="planSettings">
+              <div class="card-header">
+                <h2>【プラン】の追加・編集</h2>
+              </div>
+              <div class="form-body" style="border-bottom: 1px solid var(--border);">
+                <div class="grid-form">
+                  <input id="planEditId" type="hidden" />
+                  <div class="form-group"><label>プランコード</label><input id="planCode" placeholder="basic" /></div>
+                  <div class="form-group"><label>プラン名</label><input id="planName" placeholder="ベーシック" /></div>
+                  <div class="form-group full-width"><label>説明（任意）</label><input id="planDesc" placeholder="プラン説明" /></div>
+                  <div class="form-group"><label>標準価格（円）</label><input id="planPrice" type="number" value="0" /></div>
+                  <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+                    <button class="btn-add" id="plan-save-btn" onclick="savePlan()">このプランを追加する</button>
+                    <button class="btn-refresh" id="plan-cancel-btn" style="display:none;" onclick="cancelPlanEdit()">編集をキャンセル</button>
+                  </div>
+                  <div class="full-width"><strong>登録済み契約プラン:</strong> <span id="planMasterList">-</span></div>
+                </div>
+              </div>
+            </section>
 
-          <div class="form-group">
-            <label>契約ステータス値</label>
-            <input id="statusId" type="hidden" />
-            <input id="statusValue" placeholder="稼働中" />
-          </div>
-          <div class="form-group">
-            <label>契約ステータス表示名</label>
-            <input id="statusLabel" placeholder="稼働中" />
-          </div>
-          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
-            <button class="btn-add" id="status-save-btn" onclick="addContractOption('status')">契約ステータスを追加</button>
-            <button class="btn-refresh" id="status-cancel-btn" style="display:none;" onclick="cancelContractOptionEdit('status')">編集をキャンセル</button>
-          </div>
-          <div class="full-width"><strong>登録済み契約ステータス:</strong> <span id="statusOptionsList">-</span></div>
+            <section class="card section-service" id="phaseSettings">
+              <div class="card-header" style="border-top: 1px solid var(--border);">
+                <h2>フェーズ / ステータス設定</h2>
+              </div>
+              <div class="form-body" style="border-bottom: 1px solid var(--border);">
+                <div class="grid-form">
+                  <div class="form-group">
+                    <label>フェーズ値</label>
+                    <input id="phaseId" type="hidden" />
+                    <input id="phaseValue" placeholder="運用中" />
+                  </div>
+                  <div class="form-group">
+                    <label>フェーズ表示名</label>
+                    <input id="phaseLabel" placeholder="リード" />
+                  </div>
+                  <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+                    <button class="btn-add" id="phase-save-btn" onclick="addContractOption('phase')">フェーズを追加</button>
+                    <button class="btn-refresh" id="phase-cancel-btn" style="display:none;" onclick="cancelContractOptionEdit('phase')">編集をキャンセル</button>
+                  </div>
+                  <div class="full-width"><strong>登録済みフェーズ:</strong> <span id="phaseOptionsList">-</span></div>
 
-          <div class="form-group">
-            <label>顧客ステータス値</label>
-            <input id="accountStatusId" type="hidden" />
-            <input id="accountStatusValue" placeholder="active" />
-          </div>
-          <div class="form-group">
-            <label>顧客ステータス表示名</label>
-            <input id="accountStatusLabel" placeholder="稼働中" />
-          </div>
-          <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
-            <button class="btn-add" id="account-status-save-btn" onclick="saveAccountStatusOption()">顧客ステータスを追加</button>
-            <button class="btn-refresh" id="account-status-cancel-btn" style="display:none;" onclick="cancelAccountStatusEdit()">編集をキャンセル</button>
-          </div>
-          <div class="full-width"><strong>登録済み顧客ステータス:</strong> <span id="accountStatusOptionsList">-</span></div>
-        </div>
-      </div>
-    </section>
+                  <div class="form-group">
+                    <label>契約ステータス値</label>
+                    <input id="statusId" type="hidden" />
+                    <input id="statusValue" placeholder="稼働中" />
+                  </div>
+                  <div class="form-group">
+                    <label>契約ステータス表示名</label>
+                    <input id="statusLabel" placeholder="稼働中" />
+                  </div>
+                  <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+                    <button class="btn-add" id="status-save-btn" onclick="addContractOption('status')">契約ステータスを追加</button>
+                    <button class="btn-refresh" id="status-cancel-btn" style="display:none;" onclick="cancelContractOptionEdit('status')">編集をキャンセル</button>
+                  </div>
+                  <div class="full-width"><strong>登録済み契約ステータス:</strong> <span id="statusOptionsList">-</span></div>
 
-    <section class="card section-service tab-panel" data-tab-panel="service-list">
-      <div class="card-header" style="border-top: 1px solid var(--border);">
-        <h2>登録済みのサービス詳細一覧</h2>
+                  <div class="form-group">
+                    <label>顧客ステータス値</label>
+                    <input id="accountStatusId" type="hidden" />
+                    <input id="accountStatusValue" placeholder="active" />
+                  </div>
+                  <div class="form-group">
+                    <label>顧客ステータス表示名</label>
+                    <input id="accountStatusLabel" placeholder="稼働中" />
+                  </div>
+                  <div class="full-width" style="text-align: right; border-top: 1px solid var(--border); padding-top: 1rem;">
+                    <button class="btn-add" id="account-status-save-btn" onclick="saveAccountStatusOption()">顧客ステータスを追加</button>
+                    <button class="btn-refresh" id="account-status-cancel-btn" style="display:none;" onclick="cancelAccountStatusEdit()">編集をキャンセル</button>
+                  </div>
+                  <div class="full-width"><strong>登録済み顧客ステータス:</strong> <span id="accountStatusOptionsList">-</span></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
       </div>
-      <div class="table-container">
-        <table id="ctrTable"></table>
-      </div>
-    </section>
+    </div>
   </main>
 
   <script>
@@ -507,13 +546,13 @@
       document.querySelectorAll('[data-tab-panel]').forEach((panel) => {
         panel.classList.toggle('active', panel.dataset.tabPanel === tabName);
       });
-      document.querySelectorAll('.tab-button').forEach((button) => {
+      document.querySelectorAll('.side-button').forEach((button) => {
         button.classList.toggle('active', button.dataset.tabTarget === tabName);
       });
     }
 
     function initTabs() {
-      const buttons = document.querySelectorAll('.tab-button');
+      const buttons = document.querySelectorAll('.side-button');
       buttons.forEach((button) => {
         button.addEventListener('click', () => {
           const target = button.dataset.tabTarget;
@@ -522,6 +561,16 @@
         });
       });
       setActiveTab('customer');
+    }
+
+    function openSettings(sectionId) {
+      setActiveTab('settings');
+      if (!sectionId) return;
+      const target = document.getElementById(sectionId);
+      if (!target) return;
+      setTimeout(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
     }
 
     const escapeHtml = (text) => String(text ?? '')
@@ -643,7 +692,7 @@
     function startEditPlan(planId) {
       const plan = plans.find((item) => item.id === planId);
       if (!plan) return;
-      setActiveTab('plan');
+      setActiveTab('settings');
       document.getElementById('planEditId').value = plan.id;
       document.getElementById('planCode').value = plan.code || '';
       document.getElementById('planName').value = plan.name || '';

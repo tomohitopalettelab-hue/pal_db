@@ -774,6 +774,109 @@ app.post('/api/chat-auth/verify', async (req: Request, res: Response) => {
   }
 });
 
+// ── pal_opt settings endpoints ──────────────────────────────────────────────
+
+app.get('/api/pal-opt-settings', async (req: Request, res: Response) => {
+  try {
+    await ensureTables();
+    const paletteId = String(req.query.paletteId || '').trim().toUpperCase();
+    if (!paletteId) {
+      return res.status(400).json({ success: false, error: 'paletteId is required' });
+    }
+    const { sql } = await import('@vercel/postgres');
+    const { rows } = await sql`SELECT * FROM pal_opt_settings WHERE palette_id = ${paletteId} LIMIT 1`;
+    return res.json({ success: true, settings: rows[0] || null });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to fetch pal_opt settings' });
+  }
+});
+
+app.post('/api/pal-opt-settings', async (req: Request, res: Response) => {
+  try {
+    await ensureTables();
+    const { sql } = await import('@vercel/postgres');
+    const b = req.body;
+    const paletteId = String(b.paletteId || '').trim().toUpperCase();
+    if (!paletteId) return res.status(400).json({ success: false, error: 'paletteId is required' });
+    const { randomUUID } = await import('crypto');
+    const id = randomUUID();
+    const keywords = JSON.stringify(Array.isArray(b.targetKeywords) ? b.targetKeywords : []);
+    await sql`
+      INSERT INTO pal_opt_settings (
+        id, palette_id, ig_access_token, ig_business_account_id,
+        gbp_access_token, gbp_refresh_token, gbp_location_id,
+        blog_url, blog_wp_username, blog_api_key,
+        target_keywords, goals, default_tone, has_pal_studio, has_pal_trust
+      ) VALUES (
+        ${id}, ${paletteId}, ${b.igAccessToken ?? null}, ${b.igBusinessAccountId ?? null},
+        ${b.gbpAccessToken ?? null}, ${b.gbpRefreshToken ?? null}, ${b.gbpLocationId ?? null},
+        ${b.blogUrl ?? null}, ${b.blogWpUsername ?? null}, ${b.blogApiKey ?? null},
+        ${keywords}::jsonb, ${b.goals ?? null}, ${b.defaultTone ?? 'professional'},
+        ${Boolean(b.hasPalStudio)}, ${Boolean(b.hasPalTrust)}
+      )
+      ON CONFLICT (palette_id) DO UPDATE SET
+        ig_access_token = EXCLUDED.ig_access_token,
+        ig_business_account_id = EXCLUDED.ig_business_account_id,
+        gbp_access_token = EXCLUDED.gbp_access_token,
+        gbp_refresh_token = EXCLUDED.gbp_refresh_token,
+        gbp_location_id = EXCLUDED.gbp_location_id,
+        blog_url = EXCLUDED.blog_url,
+        blog_wp_username = EXCLUDED.blog_wp_username,
+        blog_api_key = EXCLUDED.blog_api_key,
+        target_keywords = EXCLUDED.target_keywords,
+        goals = EXCLUDED.goals,
+        default_tone = EXCLUDED.default_tone,
+        has_pal_studio = EXCLUDED.has_pal_studio,
+        has_pal_trust = EXCLUDED.has_pal_trust,
+        updated_at = NOW()
+    `;
+    const { rows } = await sql`SELECT * FROM pal_opt_settings WHERE palette_id = ${paletteId} LIMIT 1`;
+    return res.json({ success: true, settings: rows[0] || null });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to upsert pal_opt settings' });
+  }
+});
+
+// ── pal_opt posts endpoints ──────────────────────────────────────────────────
+
+app.get('/api/pal-opt-posts', async (req: Request, res: Response) => {
+  try {
+    await ensureTables();
+    const { sql } = await import('@vercel/postgres');
+    const paletteId = String(req.query.paletteId || '').trim().toUpperCase();
+    const status = String(req.query.status || '').trim();
+    const limit = Math.min(Number(req.query.limit || 20), 100);
+    let rows;
+    if (paletteId && status) {
+      ({ rows } = await sql`SELECT * FROM pal_opt_posts WHERE palette_id = ${paletteId} AND status = ${status} ORDER BY updated_at DESC LIMIT ${limit}`);
+    } else if (paletteId) {
+      ({ rows } = await sql`SELECT * FROM pal_opt_posts WHERE palette_id = ${paletteId} ORDER BY updated_at DESC LIMIT ${limit}`);
+    } else {
+      ({ rows } = await sql`SELECT * FROM pal_opt_posts ORDER BY updated_at DESC LIMIT ${limit}`);
+    }
+    return res.json({ success: true, posts: rows });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to fetch pal_opt posts' });
+  }
+});
+
+app.delete('/api/pal-opt-posts/:id', async (req: Request, res: Response) => {
+  try {
+    await ensureTables();
+    const { sql } = await import('@vercel/postgres');
+    const postId = String(req.params.id || '').trim();
+    if (!postId) return res.status(400).json({ success: false, error: 'post id is required' });
+    await sql`DELETE FROM pal_opt_posts WHERE id = ${postId}`;
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to delete pal_opt post' });
+  }
+});
+
 app.listen(port, async () => {
   try {
     await ensureTables();

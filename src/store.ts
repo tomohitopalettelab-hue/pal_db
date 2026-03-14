@@ -146,6 +146,9 @@ const normalizeServiceKey = (value: unknown): string => {
   if (compact === 'trust' || compact === 'pal_trust') {
     return 'pal_trust';
   }
+  if (compact === 'opt' || compact === 'pal_opt' || compact === 'palopt') {
+    return 'pal_opt';
+  }
   return compact;
 };
 
@@ -643,6 +646,62 @@ export const ensureTables = async () => {
       ('acc-status-inactive', 'inactive', '停止中', 20)
     ON CONFLICT (value) DO NOTHING
   `;
+
+  // pal_opt tables
+  await sql`
+    CREATE TABLE IF NOT EXISTS pal_opt_settings (
+      id                      TEXT PRIMARY KEY,
+      palette_id              TEXT NOT NULL UNIQUE,
+      ig_access_token         TEXT,
+      ig_business_account_id  TEXT,
+      gbp_access_token        TEXT,
+      gbp_refresh_token       TEXT,
+      gbp_location_id         TEXT,
+      blog_url                TEXT,
+      blog_wp_username        TEXT,
+      blog_api_key            TEXT,
+      target_keywords         JSONB NOT NULL DEFAULT '[]',
+      goals                   TEXT,
+      default_tone            TEXT NOT NULL DEFAULT 'professional',
+      has_pal_studio          BOOLEAN NOT NULL DEFAULT FALSE,
+      has_pal_trust           BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS pal_opt_posts (
+      id                  TEXT PRIMARY KEY,
+      palette_id          TEXT NOT NULL,
+      title               TEXT NOT NULL DEFAULT '',
+      topic               TEXT NOT NULL DEFAULT '',
+      keywords            JSONB NOT NULL DEFAULT '[]',
+      target_audience     TEXT,
+      image_urls          JSONB NOT NULL DEFAULT '[]',
+      status              TEXT NOT NULL DEFAULT 'draft',
+      instagram_caption   TEXT,
+      instagram_image_url TEXT,
+      instagram_post_id   TEXT,
+      blog_title          TEXT,
+      blog_body_html      TEXT,
+      blog_slug           TEXT,
+      blog_post_id        TEXT,
+      gbp_summary         TEXT,
+      gbp_call_to_action  TEXT,
+      gbp_post_id         TEXT,
+      published_platforms JSONB NOT NULL DEFAULT '[]',
+      error_log           TEXT,
+      approved_at         TIMESTAMPTZ,
+      published_at        TIMESTAMPTZ,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS pal_opt_posts_palette_id_idx ON pal_opt_posts (palette_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS pal_opt_posts_status_idx ON pal_opt_posts (status)`;
+  await sql`CREATE INDEX IF NOT EXISTS pal_opt_posts_updated_at_idx ON pal_opt_posts (updated_at DESC)`;
 
   initialized = true;
 };

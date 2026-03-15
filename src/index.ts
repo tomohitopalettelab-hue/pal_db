@@ -190,180 +190,301 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
   const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
   const [w, h] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
   const isVertical = h > w;
-  const isSquare = h === w;
+  const isSquare   = h === w;
+  const isWide     = w > h;
 
   const colorPrimary = String(payload?.colorPrimary || '#E95464');
   const colorAccent  = String(payload?.colorAccent  || '#1c9a8b');
   const bgmRaw = String(payload?.bgm || '');
   const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
 
-  // Text position: lower third for vertical/square, center-left for wide
-  const titleY = isVertical ? '70%' : isSquare ? '66%' : '65%';
-  const subY   = isVertical ? '76%' : isSquare ? '74%' : '75%';
+  // ── Scene-level transition resolver (uses cut.transition + index for variety) ─
+  const resolveSceneTransition = (transition: string, idx: number) => {
+    const t = String(transition || '').toLowerCase();
+    if (t === 'none') return { animations: [], exit_animations: [] };
 
-  // Build cuts from new-format `cuts` or old-format `creatomatePlan.scenes`
+    // Slide: alternate direction so consecutive slides feel different
+    if (t === 'slide') {
+      const dirs = ['left', 'right', 'left', 'up', 'right'] as const;
+      return {
+        animations:      [{ type: 'slide', direction: dirs[idx % dirs.length], duration: 0.5, fade: false, easing: 'quadratic-out' }],
+        exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
+      };
+    }
+    // Zoom: alternate zoom-in / zoom-out entrance
+    if (t === 'zoom') {
+      const startScale = idx % 2 === 0 ? '107%' : '94%';
+      return {
+        animations:      [{ type: 'scale', start_scale: startScale, end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
+        exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
+      };
+    }
+    // Auto / fade: cycle through fade → slide → zoom → slide(rev) → zoom(rev)
+    const cycle = idx % 5;
+    if (cycle === 0 || cycle === 4) {
+      return {
+        animations:      [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+        exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in'  }],
+      };
+    }
+    if (cycle === 1 || cycle === 3) {
+      const dir = cycle === 1 ? 'left' : 'right';
+      return {
+        animations:      [{ type: 'slide', direction: dir, duration: 0.5, fade: false, easing: 'quadratic-out' }],
+        exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
+      };
+    }
+    // cycle === 2
+    return {
+      animations:      [{ type: 'scale', start_scale: '106%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
+      exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
+    };
+  };
+
+  // ── Text animation resolver (uses cut.animation + index) ─────────────────────
+  const resolveTitleAnim = (animation: string, idx: number): any[] => {
+    const a = String(animation || '').toLowerCase();
+    if (a === 'none') return [];
+    if (a === 'fade') return [{ type: 'fade', duration: 0.6, easing: 'quadratic-out' }];
+    if (a === 'zoom') return [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.6, easing: 'quadratic-out' }];
+    // 'slide' or default: rotate through directions so no two consecutive cuts are the same
+    const dirs = ['up', 'right', 'up', 'left', 'up', 'right', 'up'] as const;
+    const dir  = dirs[idx % dirs.length];
+    const dist = dir === 'up' ? '10%' : '7%';
+    return [{ type: 'slide', direction: dir, distance: dist, fade: true, duration: 0.55, easing: 'quadratic-out' }];
+  };
+
+  const resolveSubAnim = (animation: string, idx: number): any[] => {
+    const a = String(animation || '').toLowerCase();
+    if (a === 'none') return [];
+    if (a === 'zoom') return [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }];
+    // Alternate sub-animation so it differs from title
+    const cycle = idx % 3;
+    if (cycle === 0) return [{ type: 'slide', direction: 'up', distance: '6%', fade: true, duration: 0.5, easing: 'quadratic-out' }];
+    if (cycle === 1) return [{ type: 'fade', duration: 0.65, easing: 'quadratic-out' }];
+    return [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.5, easing: 'quadratic-out' }];
+  };
+
+  // ── Ken Burns patterns (alternate per scene so consecutive scenes differ) ─────
+  const resolveKenBurns = (idx: number): any[] => {
+    const patterns = [
+      [{ type: 'scale', fade: false, start_scale: '100%', end_scale: '112%', easing: 'linear' }], // slow zoom in
+      [{ type: 'scale', fade: false, start_scale: '112%', end_scale: '100%', easing: 'linear' }], // slow zoom out
+      [{ type: 'scale', fade: false, start_scale: '104%', end_scale: '114%', easing: 'linear' }], // zoom in from mid
+      [{ type: 'scale', fade: false, start_scale: '110%', end_scale: '102%', easing: 'linear' }], // zoom out to mid
+    ];
+    return patterns[idx % patterns.length];
+  };
+
+  // ── Build cuts (new-format `cuts`, fallback to old `creatomatePlan.scenes`) ───
   let rawCuts: any[] = [];
   if (Array.isArray(payload?.cuts) && (payload.cuts as any[]).length > 0) {
     rawCuts = payload.cuts as any[];
   } else {
-    const plan = payload?.creatomatePlan as Record<string, unknown> | undefined;
+    const plan   = payload?.creatomatePlan as Record<string, unknown> | undefined;
     const scenes = Array.isArray(plan?.scenes) ? plan!.scenes : [];
     rawCuts = scenes.map((s: any) => ({
-      duration: Number(s?.durationSec || 4),
-      imageUrl: String(s?.imageUrl || ''),
-      mainText: String(s?.title || s?.textMain || ''),
-      subText:  String(s?.subtitle || s?.textSub || ''),
+      duration:   Number(s?.durationSec || 4),
+      imageUrl:   String(s?.imageUrl    || ''),
+      mainText:   String(s?.title       || s?.textMain || ''),
+      subText:    String(s?.subtitle    || s?.textSub  || ''),
+      transition: String(s?.textTransition || ''),
+      animation:  String(s?.textAnimation  || ''),
     }));
   }
 
-  // Fallback: at least one cut
+  // Final fallback: at least one placeholder cut
   if (rawCuts.length === 0) {
     rawCuts = [{
-      duration: 5,
-      imageUrl: '',
-      mainText: String(payload?.telopMain || 'タイトル'),
-      subText:  String(payload?.telopSub  || ''),
+      duration:   5,
+      imageUrl:   '',
+      mainText:   String(payload?.telopMain || 'タイトル'),
+      subText:    String(payload?.telopSub  || ''),
+      transition: 'fade',
+      animation:  'slide',
     }];
   }
 
+  // ── Layout constants (adjusted per orientation) ───────────────────────────────
+  const textX     = isWide ? '7%'  : '10%';
+  const textWidth = isWide ? '52%' : isVertical ? '82%' : '78%';
+  const barX      = isWide ? '7%'  : '10%';
+  const barW      = isVertical ? '1.1 vmin' : '0.75 vmin';
+  const barH      = isWide ? '22%' : '20%';
+  const barY      = isVertical ? '64%'   : isSquare ? '59%'  : '57%';
+  const titleY    = isVertical ? '66.5%' : isSquare ? '61%'  : '59.5%';
+  const subY      = isVertical ? '73.5%' : isSquare ? '69.5%': '68%';
+  const titleSize = isVertical ? '5.8 vmin' : isSquare ? '5.2 vmin' : '5.8 vmin';
+  const subSize   = isVertical ? '3.2 vmin' : isSquare ? '3.5 vmin' : '3.6 vmin';
+  const textIndent = isVertical ? '14%' : isWide ? '10%' : '13%';
+
+  // ── Build scene compositions ──────────────────────────────────────────────────
   const sceneCompositions = rawCuts.slice(0, 7).map((cut: any, i: number) => {
     const nn = String(i + 1).padStart(2, '0');
     const timeStart = rawCuts.slice(0, i).reduce((acc: number, c: any) => acc + Number(c.duration || 4), 0);
-    const dur = Number(cut.duration || cut.durationSec || 4);
-    const imgUrl = String(cut.imageUrl || '').trim();
-    const hasImg = imgUrl.startsWith('http');
+    const dur       = Number(cut.duration || cut.durationSec || 4);
+    const imgUrl    = String(cut.imageUrl || '').trim();
+    const hasImg    = imgUrl.startsWith('http');
+
+    const transition = String(cut.transition || '');
+    const animation  = String(cut.animation  || '');
+    const { animations, exit_animations } = resolveSceneTransition(transition, i);
+    const titleAnim = resolveTitleAnim(animation, i);
+    const subAnim   = resolveSubAnim(animation, i);
+    const kbAnim    = resolveKenBurns(i);
+
+    // Background: image (with Ken Burns) or brand-colored shape
+    const bgElement = hasImg ? {
+      name:      `bg_${nn}`,
+      type:      'image',
+      track:     1,
+      time:      0,
+      source:    imgUrl,
+      dynamic:   true,
+      width:     '100%',
+      height:    '100%',
+      x:         '50%',
+      y:         '50%',
+      x_anchor:  '50%',
+      y_anchor:  '50%',
+      fill_mode: 'cover',
+      animations: kbAnim,
+    } : {
+      name:       `bg_${nn}`,
+      type:       'shape',
+      track:      1,
+      time:       0,
+      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_color: colorPrimary,
+      width:      '100%',
+      height:     '100%',
+      dynamic:    true,
+    };
+
+    // Light overall scrim (keeps details visible)
+    const overlayLight = {
+      type:       'shape',
+      track:      2,
+      time:       0,
+      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_color: hasImg ? 'rgba(0,0,0,0.20)' : 'rgba(0,0,0,0.12)',
+      width:      '100%',
+      height:     '100%',
+      x:          '50%',
+      y:          '50%',
+      x_anchor:   '50%',
+      y_anchor:   '50%',
+    };
+
+    // Dark lower-third overlay for text legibility (bottom ~46%)
+    const overlayBottom = {
+      type:       'shape',
+      track:      3,
+      time:       0,
+      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_color: hasImg ? 'rgba(0,0,0,0.60)' : 'rgba(0,0,0,0.50)',
+      width:      '100%',
+      height:     isVertical ? '45%' : '48%',
+      x:          '50%',
+      y:          '100%',
+      x_anchor:   '50%',
+      y_anchor:   '100%',
+      animations: [{ type: 'fade', duration: 0.45, easing: 'quadratic-out' }],
+    };
+
+    // Accent colour bar – fades + slides up slightly with the text block
+    const accentBar = {
+      type:       'shape',
+      track:      4,
+      time:       0.08,
+      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_color: colorAccent,
+      width:      barW,
+      height:     barH,
+      x:          barX,
+      y:          barY,
+      x_anchor:   '0%',
+      y_anchor:   '0%',
+      animations: [{ type: 'slide', direction: 'up', distance: '6%', fade: true, duration: 0.45, easing: 'quadratic-out' }],
+    };
+
+    // Main title
+    const titleEl = {
+      name:        `title_${nn}`,
+      type:        'text',
+      track:       5,
+      time:        0.2,
+      text:        String(cut.mainText || cut.title || cut.textMain || ''),
+      dynamic:     true,
+      x:           textIndent,
+      y:           titleY,
+      x_anchor:    '0%',
+      y_anchor:    '100%',
+      width:       textWidth,
+      font_family: 'Noto Sans JP',
+      font_size:   titleSize,
+      font_weight: '700',
+      fill_color:  '#ffffff',
+      line_height: 1.2,
+      text_clip:   true,
+      animations:  titleAnim,
+    };
+
+    // Subtitle
+    const subEl = {
+      name:        `sub_${nn}`,
+      type:        'text',
+      track:       6,
+      time:        0.38,
+      text:        String(cut.subText || cut.subtitle || cut.textSub || ''),
+      dynamic:     true,
+      x:           textIndent,
+      y:           subY,
+      x_anchor:    '0%',
+      y_anchor:    '0%',
+      width:       textWidth,
+      font_family: 'Noto Sans JP',
+      font_size:   subSize,
+      fill_color:  'rgba(255,255,255,0.88)',
+      line_height: 1.3,
+      text_clip:   true,
+      animations:  subAnim,
+    };
 
     return {
-      type: 'composition',
-      track: i + 1,
-      time: timeStart,
-      duration: dur,
-      elements: [
-        // Background image or solid color
-        hasImg ? {
-          name: `scene_${nn}`,
-          type: 'image',
-          track: 1,
-          time: 0,
-          source: imgUrl,
-          dynamic: true,
-          width: '100%',
-          height: '100%',
-          x: '50%',
-          y: '50%',
-          x_anchor: '50%',
-          y_anchor: '50%',
-          fill_mode: 'cover',
-          animations: [{ type: 'scale', fade: false, start_scale: '108%', end_scale: '100%', easing: 'linear' }],
-        } : {
-          name: `scene_${nn}`,
-          type: 'shape',
-          track: 1,
-          time: 0,
-          path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-          fill_color: colorPrimary,
-          width: '100%',
-          height: '100%',
-          dynamic: true,
-        },
-        // Dark overlay
-        {
-          type: 'shape',
-          track: 2,
-          time: 0,
-          path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-          fill_color: hasImg ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.2)',
-          width: '100%',
-          height: '100%',
-          x: '50%',
-          y: '50%',
-          x_anchor: '50%',
-          y_anchor: '50%',
-        },
-        // Accent bar
-        {
-          type: 'shape',
-          track: 3,
-          time: 0,
-          path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-          fill_color: colorAccent,
-          width: isVertical ? '1.2 vmin' : '0.8 vmin',
-          height: '18%',
-          x: '8%',
-          y: isVertical ? '67%' : '61%',
-          x_anchor: '0%',
-          y_anchor: '0%',
-        },
-        // Main title
-        {
-          name: `scene_${nn}_title`,
-          type: 'text',
-          track: 4,
-          time: 0.15,
-          text: String(cut.mainText || cut.title || cut.textMain || ''),
-          dynamic: true,
-          x: '12%',
-          y: titleY,
-          x_anchor: '0%',
-          y_anchor: '100%',
-          width: '80%',
-          font_family: 'Noto Sans JP',
-          font_size: isVertical ? '5.5 vmin' : isSquare ? '5.5 vmin' : '6.5 vmin',
-          font_weight: '700',
-          fill_color: '#ffffff',
-          line_height: 1.25,
-          text_clip: true,
-          animations: [{ type: 'slide', fade: true, direction: 'up', distance: '6%', duration: 0.5, easing: 'quadratic-out' }],
-        },
-        // Subtitle
-        {
-          name: `scene_${nn}_sub`,
-          type: 'text',
-          track: 5,
-          time: 0.3,
-          text: String(cut.subText || cut.subtitle || cut.textSub || ''),
-          dynamic: true,
-          x: '12%',
-          y: subY,
-          x_anchor: '0%',
-          y_anchor: '0%',
-          width: '80%',
-          font_family: 'Noto Sans JP',
-          font_size: isVertical ? '3.2 vmin' : '3.8 vmin',
-          fill_color: 'rgba(255,255,255,0.85)',
-          line_height: 1.3,
-          text_clip: true,
-          animations: [{ type: 'slide', fade: true, direction: 'up', distance: '6%', duration: 0.5, easing: 'quadratic-out' }],
-        },
-      ],
-      animations:      [{ type: 'fade', duration: 0.4, easing: 'quadratic-out' }],
-      exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in'  }],
+      type:            'composition',
+      track:           i + 1,
+      time:            timeStart,
+      duration:        dur,
+      elements:        [bgElement, overlayLight, overlayBottom, accentBar, titleEl, subEl],
+      animations,
+      exit_animations,
     };
   });
 
   const rootElements: any[] = [...sceneCompositions];
 
-  // BGM
+  // BGM track
   if (bgmUrl) {
     rootElements.push({
-      name: 'bgm_track',
-      type: 'audio',
-      track: 90,
-      time: 0,
-      source: bgmUrl,
+      name:          'bgm_track',
+      type:          'audio',
+      track:         90,
+      time:          0,
+      source:        bgmUrl,
       audio_fade_out: 1.5,
     });
   }
 
-  // Accent color holders (1×1 px, effectively invisible, for reference)
+  // Invisible brand-colour reference elements (useful for dynamic replacements)
   rootElements.push(
-    { name: 'accent_primary',   type: 'shape', track: 91, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorPrimary, width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true },
-    { name: 'accent_secondary', type: 'shape', track: 92, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorAccent,  width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true },
+    { name: 'brand_primary',   type: 'shape', track: 91, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorPrimary, width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true },
+    { name: 'brand_secondary', type: 'shape', track: 92, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorAccent,  width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true },
   );
 
   return {
     output_format: 'mp4',
-    width: w,
+    width:  w,
     height: h,
     frame_rate: 30,
     elements: rootElements,

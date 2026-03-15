@@ -161,127 +161,225 @@ const getPublicBaseUrl = (req: Request): string => {
   return host ? `${proto}://${host}` : '';
 };
 
-const CREATOMATE_API_URL = 'https://api.creatomate.com/v2/renders';
+const CREATOMATE_API_URL = 'https://api.creatomate.com/v1/renders';
 const CREATOMATE_API_KEY = String(process.env.CREATOMATE_API_KEY || '').trim();
-const CREATOMATE_TEMPLATE_ID = String(process.env.CREATOMATE_TEMPLATE_ID || '').trim();
 
-
-const PAL_VIDEO_TEMPLATE_MAP: Record<string, string> = {
-  instagram_feed: 'a02095a2-9469-4f52-9bcd-66fc884453a1',
-  promotion: '516cafa1-15cc-44e3-8a39-af5a07862bc0',
-  youtube: '979f7579-5567-4d7b-a615-777d825d9f9d',
+// Dimensions per destination (投稿先)
+const DESTINATION_DIMENSIONS: Record<string, [number, number]> = {
+  instagram_reel:   [1080, 1920],
+  instagram_story:  [1080, 1920],
+  tiktok:           [1080, 1920],
+  youtube_short:    [1080, 1920],
+  line_voom:        [1080, 1350],
+  x_twitter:        [1080, 1350],
+  facebook:         [1080, 1350],
+  instagram_feed:   [1080, 1080],
+  youtube:          [1920, 1080],
+  web_banner:       [1920, 1080],
 };
 
-const resolvePalVideoTemplateCandidates = (purpose: string) => {
-  const mapped = PAL_VIDEO_TEMPLATE_MAP[purpose];
-  return [mapped, CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'].filter(Boolean);
+// BGM tracks (royalty-free)
+const BGM_URL_MAP: Record<string, string> = {
+  bright_pop:    'https://cdn.pixabay.com/audio/2022/05/27/audio_1808fbf07a.mp3',
+  cool_minimal:  'https://cdn.pixabay.com/audio/2022/03/10/audio_270f49d28e.mp3',
+  cinematic:     'https://cdn.pixabay.com/audio/2022/01/20/audio_d0bd90a6d6.mp3',
+  natural_warm:  'https://cdn.pixabay.com/audio/2021/11/13/audio_7b6e8dd7bf.mp3',
 };
 
-const buildCreatomateFallbackPlan = (payload: Record<string, unknown>) => {
-  const cuts = Array.isArray(payload?.cuts) ? payload.cuts : [];
-  const durationSec = Number(payload?.durationSec || 30);
-  const sceneCount = cuts.length > 0 ? cuts.length : Math.max(1, Math.min(7, Math.ceil(durationSec / 4)));
-  const baseDuration = 4;
-  const lastDuration = Math.max(1, durationSec - baseDuration * (sceneCount - 1));
-  const purpose = String(payload?.purpose || 'instagram_reel');
-  const templateCandidates = resolvePalVideoTemplateCandidates(purpose);
-  const safeCuts = cuts.length > 0
-    ? cuts
-    : Array.from({ length: sceneCount }).map((_, index) => ({
-        durationSec: index === sceneCount - 1 ? lastDuration : baseDuration,
-        imageUrl: (payload?.imageUrls as string[] | undefined)?.[index] || (payload?.imageUrls as string[] | undefined)?.[0] || '',
-        textMain: index === 0 ? payload?.telopMain : `ポイント${index + 1}`,
-        textSub: index === 0 ? payload?.telopSub : '',
-        templateId: templateCandidates[index % templateCandidates.length],
-        textAnimation: 'none',
-        textTransition: 'none',
-      }));
+const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
+  const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
+  const [w, h] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
+  const isVertical = h > w;
+  const isSquare = h === w;
 
-  const templateMode = safeCuts.some((cut: any) => Boolean(cut?.templateId)) ? 'dynamic' : 'fixed';
+  const colorPrimary = String(payload?.colorPrimary || '#E95464');
+  const colorAccent  = String(payload?.colorAccent  || '#1c9a8b');
+  const bgmRaw = String(payload?.bgm || '');
+  const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
 
-  return {
-    templateId: CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1',
-    templateMode,
-    scenes: safeCuts.map((cut: any) => ({
-      durationSec: Number(cut.durationSec || baseDuration),
-      imageUrl: String(cut.imageUrl || ''),
-      title: String(cut.textMain || payload?.telopMain || ''),
-      subtitle: String(cut.textSub || payload?.telopSub || ''),
-      templateId: String(cut.templateId || templateCandidates[0] || CREATOMATE_TEMPLATE_ID || 'pal_video_fixed_v1'),
-      textAnimation: String(cut.textAnimation || 'none'),
-      textTransition: String(cut.textTransition || 'none'),
-    })),
-    style: {
-      primaryColor: String(payload?.colorPrimary || '#E95464'),
-      accentColor: String(payload?.colorAccent || '#1c9a8b'),
-      font: 'NotoSansJP',
-    },
-    audio: { bgm: String(payload?.bgm || '') },
-    dynamicTemplateCandidates: [],
-  };
-};
+  // Text position: lower third for vertical/square, center-left for wide
+  const titleY = isVertical ? '70%' : isSquare ? '66%' : '65%';
+  const subY   = isVertical ? '76%' : isSquare ? '74%' : '75%';
 
-const buildCreatomateModifications = (plan: Record<string, unknown>) => {
-  const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
-  const style = (plan?.style || {}) as Record<string, unknown>;
-  const audio = (plan?.audio || {}) as Record<string, unknown>;
-  const modifications: Array<{ id: string; source?: string; text?: string; color?: string; value?: string }> = [];
+  // Build cuts from new-format `cuts` or old-format `creatomatePlan.scenes`
+  let rawCuts: any[] = [];
+  if (Array.isArray(payload?.cuts) && (payload.cuts as any[]).length > 0) {
+    rawCuts = payload.cuts as any[];
+  } else {
+    const plan = payload?.creatomatePlan as Record<string, unknown> | undefined;
+    const scenes = Array.isArray(plan?.scenes) ? plan!.scenes : [];
+    rawCuts = scenes.map((s: any) => ({
+      duration: Number(s?.durationSec || 4),
+      imageUrl: String(s?.imageUrl || ''),
+      mainText: String(s?.title || s?.textMain || ''),
+      subText:  String(s?.subtitle || s?.textSub || ''),
+    }));
+  }
 
-  scenes.slice(0, 7).forEach((scene: any, index: number) => {
-    const slot = String(index + 1).padStart(2, '0');
-    const bg = String(scene?.imageUrl || '').trim();
-    const title = String(scene?.title || '').trim();
-    const sub = String(scene?.subtitle || '').trim();
-    if (bg) modifications.push({ id: `scene_${slot}`, source: bg });
-    if (title) modifications.push({ id: `scene_${slot}_title`, text: title });
-    if (sub) modifications.push({ id: `scene_${slot}_sub`, text: sub });
-    if (scene?.durationSec) {
-      modifications.push({ id: `scene_${slot}_duration`, value: String(scene.durationSec) });
-    }
+  // Fallback: at least one cut
+  if (rawCuts.length === 0) {
+    rawCuts = [{
+      duration: 5,
+      imageUrl: '',
+      mainText: String(payload?.telopMain || 'タイトル'),
+      subText:  String(payload?.telopSub  || ''),
+    }];
+  }
+
+  const sceneCompositions = rawCuts.slice(0, 7).map((cut: any, i: number) => {
+    const nn = String(i + 1).padStart(2, '0');
+    const timeStart = rawCuts.slice(0, i).reduce((acc: number, c: any) => acc + Number(c.duration || 4), 0);
+    const dur = Number(cut.duration || cut.durationSec || 4);
+    const imgUrl = String(cut.imageUrl || '').trim();
+    const hasImg = imgUrl.startsWith('http');
+
+    return {
+      type: 'composition',
+      track: i + 1,
+      time: timeStart,
+      duration: dur,
+      elements: [
+        // Background image or solid color
+        hasImg ? {
+          name: `scene_${nn}`,
+          type: 'image',
+          track: 1,
+          time: 0,
+          source: imgUrl,
+          dynamic: true,
+          width: '100%',
+          height: '100%',
+          x: '50%',
+          y: '50%',
+          x_anchor: '50%',
+          y_anchor: '50%',
+          fill_mode: 'cover',
+          animations: [{ type: 'scale', fade: false, start_scale: '108%', end_scale: '100%', easing: 'linear' }],
+        } : {
+          name: `scene_${nn}`,
+          type: 'shape',
+          track: 1,
+          time: 0,
+          path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+          fill_color: colorPrimary,
+          width: '100%',
+          height: '100%',
+          dynamic: true,
+        },
+        // Dark overlay
+        {
+          type: 'shape',
+          track: 2,
+          time: 0,
+          path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+          fill_color: hasImg ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.2)',
+          width: '100%',
+          height: '100%',
+          x: '50%',
+          y: '50%',
+          x_anchor: '50%',
+          y_anchor: '50%',
+        },
+        // Accent bar
+        {
+          type: 'shape',
+          track: 3,
+          time: 0,
+          path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+          fill_color: colorAccent,
+          width: isVertical ? '1.2 vmin' : '0.8 vmin',
+          height: '18%',
+          x: '8%',
+          y: isVertical ? '67%' : '61%',
+          x_anchor: '0%',
+          y_anchor: '0%',
+        },
+        // Main title
+        {
+          name: `scene_${nn}_title`,
+          type: 'text',
+          track: 4,
+          time: 0.15,
+          text: String(cut.mainText || cut.title || cut.textMain || ''),
+          dynamic: true,
+          x: '12%',
+          y: titleY,
+          x_anchor: '0%',
+          y_anchor: '100%',
+          width: '80%',
+          font_family: 'Noto Sans JP',
+          font_size: isVertical ? '5.5 vmin' : isSquare ? '5.5 vmin' : '6.5 vmin',
+          font_weight: '700',
+          fill_color: '#ffffff',
+          line_height: 1.25,
+          text_clip: true,
+          animations: [{ type: 'slide', fade: true, direction: 'up', distance: '6%', duration: 0.5, easing: 'quadratic-out' }],
+        },
+        // Subtitle
+        {
+          name: `scene_${nn}_sub`,
+          type: 'text',
+          track: 5,
+          time: 0.3,
+          text: String(cut.subText || cut.subtitle || cut.textSub || ''),
+          dynamic: true,
+          x: '12%',
+          y: subY,
+          x_anchor: '0%',
+          y_anchor: '0%',
+          width: '80%',
+          font_family: 'Noto Sans JP',
+          font_size: isVertical ? '3.2 vmin' : '3.8 vmin',
+          fill_color: 'rgba(255,255,255,0.85)',
+          line_height: 1.3,
+          text_clip: true,
+          animations: [{ type: 'slide', fade: true, direction: 'up', distance: '6%', duration: 0.5, easing: 'quadratic-out' }],
+        },
+      ],
+      animations:      [{ type: 'fade', duration: 0.4, easing: 'quadratic-out' }],
+      exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in'  }],
+    };
   });
 
-  const primary = String(style?.primaryColor || '').trim();
-  const accent = String(style?.accentColor || '').trim();
-  if (primary) modifications.push({ id: 'accent_primary', color: primary });
-  if (accent) modifications.push({ id: 'accent_secondary', color: accent });
+  const rootElements: any[] = [...sceneCompositions];
 
-  const bgm = String(audio?.bgm || '').trim();
-  if (bgm.startsWith('http')) {
-    modifications.push({ id: 'bgm_track', source: bgm });
+  // BGM
+  if (bgmUrl) {
+    rootElements.push({
+      name: 'bgm_track',
+      type: 'audio',
+      track: 90,
+      time: 0,
+      source: bgmUrl,
+      audio_fade_out: 1.5,
+    });
   }
 
-  return modifications;
-};
+  // Accent color holders (1×1 px, effectively invisible, for reference)
+  rootElements.push(
+    { name: 'accent_primary',   type: 'shape', track: 91, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorPrimary, width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true },
+    { name: 'accent_secondary', type: 'shape', track: 92, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorAccent,  width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true },
+  );
 
-const resolveCreatomateTemplateId = (plan: Record<string, unknown>) => {
-  const fromPlan = String(plan?.templateId || '').trim();
-  const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
-  const fromScene = scenes
-    .map((scene: any) => String(scene?.templateId || '').trim())
-    .find((value) => value.length > 0);
-  if (fromScene && (!fromPlan || fromPlan === 'pal_video_fixed_v1')) return fromScene;
-  if (fromPlan) return fromPlan;
-  return fromScene || String(CREATOMATE_TEMPLATE_ID || '').trim();
-};
-
-const renderCreatomateJob = async (req: Request, job: any) => {
-  const payload = (job.payload || {}) as Record<string, unknown>;
-  const plan = (payload?.creatomatePlan as Record<string, unknown> | undefined) || buildCreatomateFallbackPlan(payload);
-  const templateId = resolveCreatomateTemplateId(plan);
-  if (!templateId) {
-    throw new Error('CREATOMATE_TEMPLATE_ID is missing');
-  }
-
-  const modifications = buildCreatomateModifications(plan);
-  const modificationSummary = {
-    count: modifications.length,
-    ids: modifications.map((item) => item.id),
-    sample: modifications.slice(0, 6),
+  return {
+    output_format: 'mp4',
+    width: w,
+    height: h,
+    frame_rate: 30,
+    elements: rootElements,
   };
+};
+
+const renderCreatomateJob = async (_req: Request, job: any) => {
+  const payload = (job.payload || {}) as Record<string, unknown>;
+
+  const source = buildCreatomateInlineSource(payload);
+
   console.log('[pal-db] creatomate render request', {
     jobId: job.id,
-    templateId,
-    modificationSummary,
+    destination: String(payload?.destination || payload?.purpose || ''),
+    sceneCount: (payload?.cuts as any[] | undefined)?.length ?? 0,
+    dimensions: `${source.width}x${source.height}`,
   });
 
   const response = await fetch(CREATOMATE_API_URL, {
@@ -290,24 +388,21 @@ const renderCreatomateJob = async (req: Request, job: any) => {
       Authorization: `Bearer ${CREATOMATE_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      template_id: templateId,
-      modifications,
-    }),
+    body: JSON.stringify({ source }),
   });
 
   const data = await response.json().catch(() => ({}));
   console.log('[pal-db] creatomate render response', {
     jobId: job.id,
     status: response.status,
-    data,
+    renderId: Array.isArray(data) ? data[0]?.id : data?.id,
   });
   if (!response.ok) {
-    throw new Error(data?.error || 'creatomate render failed');
+    throw new Error((Array.isArray(data) ? data[0]?.message : data?.message) || 'creatomate render failed');
   }
 
-  const renderItem = Array.isArray(data) ? data[0] : data?.render || data;
-  const renderId = String(renderItem?.id || renderItem?.render_id || '').trim();
+  const renderItem = Array.isArray(data) ? data[0] : data;
+  const renderId   = String(renderItem?.id  || '').trim();
   const previewUrl = String(renderItem?.url || '').trim() || null;
   const nextStatus = job.status === '承認済' ? job.status : '確認中';
 
@@ -318,8 +413,6 @@ const renderCreatomateJob = async (req: Request, job: any) => {
     status: nextStatus,
     payload: {
       ...payload,
-      creatomatePlan: plan,
-      creatomateTemplateId: templateId,
       creatomateRenderId: renderId,
     },
     previewUrl,

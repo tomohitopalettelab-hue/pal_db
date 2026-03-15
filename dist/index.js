@@ -1,9 +1,12 @@
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
+import multer from 'multer';
 import path from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
-import { deleteAccountStatusOption, deleteAccount, deleteContract, deleteContractOption, deletePlan, deleteServiceSubscription, ensureTables, getPaletteServices, getPaletteSummary, hasChatLoginId, listAccountStatusOptions, listAccounts, listContracts, listContractOptions, listPlans, listServiceSubscriptions, upsertAccountStatusOption, upsertAccount, upsertContract, upsertContractOption, upsertPlan, upsertServiceSubscription, verifyChatLogin, } from './store.js';
+import { deleteAccountStatusOption, deleteAccount, deleteContract, deleteContractOption, deletePlan, deleteServiceSubscription, deleteMediaAsset, ensureTables, createMediaAsset, getPaletteServices, getPaletteSummary, hasChatLoginId, getMediaAssetById, listAccountStatusOptions, listAccounts, listContracts, listContractOptions, listMediaAssets, listPlans, listPalVideoJobs, listServiceSubscriptions, getPalVideoJob, upsertAccountStatusOption, upsertAccount, upsertContract, upsertContractOption, upsertPlan, upsertPalVideoJob, upsertServiceSubscription, verifyChatLogin, } from './store.js';
 dotenv.config();
 if (!process.env.POSTGRES_URL) {
     process.env.POSTGRES_URL =
@@ -15,12 +18,345 @@ if (!process.env.POSTGRES_URL) {
 const app = express();
 const port = Number(process.env.PORT || 3100);
 const corsOrigin = process.env.CORS_ORIGIN || '*';
+const normalizeOrigin = (value) => value.trim().replace(/\/$/, '');
+const corsOriginList = corsOrigin === '*'
+    ? '*'
+    : corsOrigin
+        .split(',')
+        .map((origin) => normalizeOrigin(origin))
+        .filter(Boolean);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
-app.use(cors({ origin: corsOrigin === '*' ? true : corsOrigin }));
+const PALETTE_ID_REGEX = /^[A-Z][0-9]{4}$/;
+const mediaRootDir = process.env.PAL_DB_MEDIA_DIR
+    ? path.resolve(process.env.PAL_DB_MEDIA_DIR)
+    : path.join(publicDir, 'media');
+const mediaUploadMaxMb = Number(process.env.MEDIA_UPLOAD_MAX_MB || 12);
+const mediaUploadMaxBytes = Math.max(mediaUploadMaxMb, 1) * 1024 * 1024;
+const allowedMediaMimeTypes = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+    'video/mp4',
+    'video/quicktime',
+]);
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || corsOriginList === '*') {
+            callback(null, true);
+            return;
+        }
+        const normalizedOrigin = normalizeOrigin(origin);
+        if (Array.isArray(corsOriginList) && corsOriginList.includes(normalizedOrigin)) {
+            callback(null, normalizedOrigin);
+            return;
+        }
+        console.warn('[pal-db] blocked CORS origin:', normalizedOrigin);
+        callback(null, false);
+    },
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(publicDir));
+app.use('/media', express.static(mediaRootDir));
+const normalizePaletteIdInput = (raw) => {
+    const value = String(raw || '').trim().toUpperCase();
+    if (!PALETTE_ID_REGEX.test(value)) {
+        throw new Error('paletteId must be 1 alphabet letter + 4 digits (例: A0001)');
+    }
+    return value;
+};
+const mediaStorage = multer.diskStorage({
+    destination: (req, _file, cb) => {
+        try {
+            const paletteId = normalizePaletteIdInput(req.body?.paletteId || req.query?.paletteId);
+            const targetDir = path.join(mediaRootDir, paletteId);
+            if (!existsSync(targetDir)) {
+                mkdirSync(targetDir, { recursive: true });
+            }
+            cb(null, targetDir);
+        }
+        catch (error) {
+            cb(error, mediaRootDir);
+        }
+    },
+    filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        const safeExt = ext && ext.length <= 10 ? ext : '';
+        const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        cb(null, `${unique}${safeExt}`);
+    },
+});
+const uploadMedia = multer({
+    storage: mediaStorage,
+    limits: { fileSize: mediaUploadMaxBytes },
+    fileFilter: (_req, file, cb) => {
+        const type = String(file.mimetype || '').toLowerCase();
+        if (allowedMediaMimeTypes.has(type) || type.startsWith('image/') || type.startsWith('video/')) {
+            cb(null, true);
+            return;
+        }
+        cb(new Error('unsupported media type'));
+    },
+});
+const uploadSingleMedia = (req, res, next) => {
+    uploadMedia.single('file')(req, res, (err) => {
+        if (err) {
+            const message = err instanceof Error ? err.message : 'upload failed';
+            res.status(400).json({ success: false, error: message });
+            return;
+        }
+        next();
+    });
+};
+const getPublicBaseUrl = (req) => {
+    const configured = process.env.PAL_DB_PUBLIC_BASE_URL?.trim();
+    if (configured)
+        return configured.replace(/\/$/, '');
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const proto = forwardedProto || req.protocol;
+    const host = req.get('host');
+    return host ? `${proto}://${host}` : '';
+};
+const CREATOMATE_API_URL = 'https://api.creatomate.com/v1/renders';
+const CREATOMATE_API_KEY = String(process.env.CREATOMATE_API_KEY || '').trim();
+// Dimensions per destination (投稿先)
+const DESTINATION_DIMENSIONS = {
+    instagram_reel: [1080, 1920],
+    instagram_story: [1080, 1920],
+    tiktok: [1080, 1920],
+    youtube_short: [1080, 1920],
+    line_voom: [1080, 1350],
+    x_twitter: [1080, 1350],
+    facebook: [1080, 1350],
+    instagram_feed: [1080, 1080],
+    youtube: [1920, 1080],
+    web_banner: [1920, 1080],
+};
+// BGM tracks (royalty-free)
+const BGM_URL_MAP = {
+    bright_pop: 'https://cdn.pixabay.com/audio/2022/05/27/audio_1808fbf07a.mp3',
+    cool_minimal: 'https://cdn.pixabay.com/audio/2022/03/10/audio_270f49d28e.mp3',
+    cinematic: 'https://cdn.pixabay.com/audio/2022/01/20/audio_d0bd90a6d6.mp3',
+    natural_warm: 'https://cdn.pixabay.com/audio/2021/11/13/audio_7b6e8dd7bf.mp3',
+};
+const buildCreatomateInlineSource = (payload) => {
+    const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
+    const [w, h] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
+    const isVertical = h > w;
+    const isSquare = h === w;
+    const colorPrimary = String(payload?.colorPrimary || '#E95464');
+    const colorAccent = String(payload?.colorAccent || '#1c9a8b');
+    const bgmRaw = String(payload?.bgm || '');
+    const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+    // Text position: lower third for vertical/square, center-left for wide
+    const titleY = isVertical ? '70%' : isSquare ? '66%' : '65%';
+    const subY = isVertical ? '76%' : isSquare ? '74%' : '75%';
+    // Build cuts from new-format `cuts` or old-format `creatomatePlan.scenes`
+    let rawCuts = [];
+    if (Array.isArray(payload?.cuts) && payload.cuts.length > 0) {
+        rawCuts = payload.cuts;
+    }
+    else {
+        const plan = payload?.creatomatePlan;
+        const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
+        rawCuts = scenes.map((s) => ({
+            duration: Number(s?.durationSec || 4),
+            imageUrl: String(s?.imageUrl || ''),
+            mainText: String(s?.title || s?.textMain || ''),
+            subText: String(s?.subtitle || s?.textSub || ''),
+        }));
+    }
+    // Fallback: at least one cut
+    if (rawCuts.length === 0) {
+        rawCuts = [{
+                duration: 5,
+                imageUrl: '',
+                mainText: String(payload?.telopMain || 'タイトル'),
+                subText: String(payload?.telopSub || ''),
+            }];
+    }
+    const sceneCompositions = rawCuts.slice(0, 7).map((cut, i) => {
+        const nn = String(i + 1).padStart(2, '0');
+        const timeStart = rawCuts.slice(0, i).reduce((acc, c) => acc + Number(c.duration || 4), 0);
+        const dur = Number(cut.duration || cut.durationSec || 4);
+        const imgUrl = String(cut.imageUrl || '').trim();
+        const hasImg = imgUrl.startsWith('http');
+        return {
+            type: 'composition',
+            track: i + 1,
+            time: timeStart,
+            duration: dur,
+            elements: [
+                // Background image or solid color
+                hasImg ? {
+                    name: `scene_${nn}`,
+                    type: 'image',
+                    track: 1,
+                    time: 0,
+                    source: imgUrl,
+                    dynamic: true,
+                    width: '100%',
+                    height: '100%',
+                    x: '50%',
+                    y: '50%',
+                    x_anchor: '50%',
+                    y_anchor: '50%',
+                    fill_mode: 'cover',
+                    animations: [{ type: 'scale', fade: false, start_scale: '108%', end_scale: '100%', easing: 'linear' }],
+                } : {
+                    name: `scene_${nn}`,
+                    type: 'shape',
+                    track: 1,
+                    time: 0,
+                    path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                    fill_color: colorPrimary,
+                    width: '100%',
+                    height: '100%',
+                    dynamic: true,
+                },
+                // Dark overlay
+                {
+                    type: 'shape',
+                    track: 2,
+                    time: 0,
+                    path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                    fill_color: hasImg ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.2)',
+                    width: '100%',
+                    height: '100%',
+                    x: '50%',
+                    y: '50%',
+                    x_anchor: '50%',
+                    y_anchor: '50%',
+                },
+                // Accent bar
+                {
+                    type: 'shape',
+                    track: 3,
+                    time: 0,
+                    path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                    fill_color: colorAccent,
+                    width: isVertical ? '1.2 vmin' : '0.8 vmin',
+                    height: '18%',
+                    x: '8%',
+                    y: isVertical ? '67%' : '61%',
+                    x_anchor: '0%',
+                    y_anchor: '0%',
+                },
+                // Main title
+                {
+                    name: `scene_${nn}_title`,
+                    type: 'text',
+                    track: 4,
+                    time: 0.15,
+                    text: String(cut.mainText || cut.title || cut.textMain || ''),
+                    dynamic: true,
+                    x: '12%',
+                    y: titleY,
+                    x_anchor: '0%',
+                    y_anchor: '100%',
+                    width: '80%',
+                    font_family: 'Noto Sans JP',
+                    font_size: isVertical ? '5.5 vmin' : isSquare ? '5.5 vmin' : '6.5 vmin',
+                    font_weight: '700',
+                    fill_color: '#ffffff',
+                    line_height: 1.25,
+                    text_clip: true,
+                    animations: [{ type: 'slide', fade: true, direction: 'up', distance: '6%', duration: 0.5, easing: 'quadratic-out' }],
+                },
+                // Subtitle
+                {
+                    name: `scene_${nn}_sub`,
+                    type: 'text',
+                    track: 5,
+                    time: 0.3,
+                    text: String(cut.subText || cut.subtitle || cut.textSub || ''),
+                    dynamic: true,
+                    x: '12%',
+                    y: subY,
+                    x_anchor: '0%',
+                    y_anchor: '0%',
+                    width: '80%',
+                    font_family: 'Noto Sans JP',
+                    font_size: isVertical ? '3.2 vmin' : '3.8 vmin',
+                    fill_color: 'rgba(255,255,255,0.85)',
+                    line_height: 1.3,
+                    text_clip: true,
+                    animations: [{ type: 'slide', fade: true, direction: 'up', distance: '6%', duration: 0.5, easing: 'quadratic-out' }],
+                },
+            ],
+            animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
+        };
+    });
+    const rootElements = [...sceneCompositions];
+    // BGM
+    if (bgmUrl) {
+        rootElements.push({
+            name: 'bgm_track',
+            type: 'audio',
+            track: 90,
+            time: 0,
+            source: bgmUrl,
+            audio_fade_out: 1.5,
+        });
+    }
+    // Accent color holders (1×1 px, effectively invisible, for reference)
+    rootElements.push({ name: 'accent_primary', type: 'shape', track: 91, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorPrimary, width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true }, { name: 'accent_secondary', type: 'shape', track: 92, time: 0, path: 'M 0 0 L 1 0 L 1 1 L 0 1 Z', fill_color: colorAccent, width: '0.1 vmin', height: '0.1 vmin', x: '0%', y: '0%', dynamic: true });
+    return {
+        output_format: 'mp4',
+        width: w,
+        height: h,
+        frame_rate: 30,
+        elements: rootElements,
+    };
+};
+const renderCreatomateJob = async (_req, job) => {
+    const payload = (job.payload || {});
+    const source = buildCreatomateInlineSource(payload);
+    console.log('[pal-db] creatomate render request', {
+        jobId: job.id,
+        destination: String(payload?.destination || payload?.purpose || ''),
+        sceneCount: payload?.cuts?.length ?? 0,
+        dimensions: `${source.width}x${source.height}`,
+    });
+    const response = await fetch(CREATOMATE_API_URL, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${CREATOMATE_API_KEY}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ source }),
+    });
+    const data = await response.json().catch(() => ({}));
+    console.log('[pal-db] creatomate render response', {
+        jobId: job.id,
+        status: response.status,
+        renderId: Array.isArray(data) ? data[0]?.id : data?.id,
+    });
+    if (!response.ok) {
+        throw new Error((Array.isArray(data) ? data[0]?.message : data?.message) || 'creatomate render failed');
+    }
+    const renderItem = Array.isArray(data) ? data[0] : data;
+    const renderId = String(renderItem?.id || '').trim();
+    const previewUrl = String(renderItem?.url || '').trim() || null;
+    const nextStatus = job.status === '承認済' ? job.status : '確認中';
+    const updated = await upsertPalVideoJob({
+        id: job.id,
+        paletteId: job.paletteId,
+        planCode: job.planCode,
+        status: nextStatus,
+        payload: {
+            ...payload,
+            creatomateRenderId: renderId,
+        },
+        previewUrl,
+        youtubeUrl: job.youtubeUrl,
+    });
+    return { updated, renderId, previewUrl };
+};
 app.get('/admin', (_req, res) => {
     res.sendFile(path.join(publicDir, 'customers.html'));
 });
@@ -29,6 +365,9 @@ app.get('/admin/customers', (_req, res) => {
 });
 app.get('/admin/customers/:id', (_req, res) => {
     res.sendFile(path.join(publicDir, 'admin.html'));
+});
+app.get('/admin/media', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'media.html'));
 });
 app.get('/health', async (_req, res) => {
     try {
@@ -48,6 +387,29 @@ app.get('/api/accounts', async (_req, res) => {
     catch (error) {
         console.error(error);
         return res.status(500).json({ success: false, error: 'failed to list accounts' });
+    }
+});
+app.post('/api/verify-chat-login', async (req, res) => {
+    try {
+        const id = String(req.body?.id || '').trim();
+        const password = String(req.body?.password || '');
+        if (!id || !password) {
+            return res.status(400).json({ success: false, error: 'id and password are required' });
+        }
+        const result = await verifyChatLogin(id, password);
+        if (!result.success) {
+            return res.status(401).json({ success: false, error: 'invalid credentials' });
+        }
+        return res.json({
+            success: true,
+            accountId: result.accountId,
+            paletteId: result.paletteId,
+            accountName: result.accountName,
+        });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to verify login' });
     }
 });
 app.post('/api/accounts', async (req, res) => {
@@ -213,6 +575,143 @@ app.get('/api/service-subscriptions', async (req, res) => {
         return res.status(500).json({ success: false, error: 'failed to list services' });
     }
 });
+app.get('/api/media', async (req, res) => {
+    try {
+        const paletteId = normalizePaletteIdInput(req.query.paletteId);
+        const assets = await listMediaAssets(paletteId);
+        return res.json({ success: true, assets });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to list media';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.post('/api/media/upload', uploadSingleMedia, async (req, res) => {
+    try {
+        const paletteId = normalizePaletteIdInput(req.body?.paletteId || req.query?.paletteId);
+        const file = req.file;
+        if (!file) {
+            return res.status(400).json({ success: false, error: 'file is required' });
+        }
+        const url = `${getPublicBaseUrl(req)}/media/${encodeURIComponent(paletteId)}/${encodeURIComponent(file.filename)}`;
+        const asset = await createMediaAsset({
+            paletteId,
+            fileName: file.filename,
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            sizeBytes: file.size,
+            url,
+        });
+        return res.json({ success: true, asset });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to upload media';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.delete('/api/media/:id', async (req, res) => {
+    try {
+        const assetId = String(req.params.id || '').trim();
+        if (!assetId)
+            return res.status(400).json({ success: false, error: 'id is required' });
+        const asset = await getMediaAssetById(assetId);
+        if (!asset)
+            return res.status(404).json({ success: false, error: 'media not found' });
+        const filePath = path.join(mediaRootDir, asset.paletteId, asset.fileName);
+        if (existsSync(filePath)) {
+            try {
+                await fs.unlink(filePath);
+            }
+            catch (error) {
+                console.warn('[pal-db] failed to remove media file', error);
+            }
+        }
+        await deleteMediaAsset(assetId);
+        return res.json({ success: true });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to delete media';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.get('/api/pal-video/jobs', async (req, res) => {
+    try {
+        const paletteId = String(req.query.paletteId || '').trim() || undefined;
+        const status = String(req.query.status || '').trim() || undefined;
+        const limit = req.query.limit ? Number(req.query.limit) : undefined;
+        const jobs = await listPalVideoJobs({ paletteId, status, limit });
+        return res.json({ success: true, jobs });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to list pal_video jobs' });
+    }
+});
+app.get('/api/pal-video/jobs/:id', async (req, res) => {
+    try {
+        const jobId = String(req.params.id || '').trim();
+        if (!jobId)
+            return res.status(400).json({ success: false, error: 'id is required' });
+        const job = await getPalVideoJob(jobId);
+        if (!job)
+            return res.status(404).json({ success: false, error: 'job not found' });
+        return res.json({ success: true, job });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to get pal_video job' });
+    }
+});
+app.post('/api/pal-video/jobs', async (req, res) => {
+    try {
+        const job = await upsertPalVideoJob(req.body || {});
+        return res.json({ success: true, job });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'failed to save pal_video job';
+        return res.status(400).json({ success: false, error: message });
+    }
+});
+app.post('/api/pal-video/generate', async (req, res) => {
+    try {
+        if (!CREATOMATE_API_KEY) {
+            return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
+        }
+        const jobId = String(req.body?.jobId || '').trim();
+        if (!jobId)
+            return res.status(400).json({ success: false, error: 'jobId is required' });
+        const job = await getPalVideoJob(jobId);
+        if (!job)
+            return res.status(404).json({ success: false, error: 'job not found' });
+        const result = await renderCreatomateJob(req, job);
+        return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
+    }
+    catch (error) {
+        console.error('[pal-db] pal-video generate failed', error);
+        const message = error instanceof Error ? error.message : 'failed to generate pal_video';
+        return res.status(500).json({ success: false, error: message });
+    }
+});
+app.post('/api/pal-video/render', async (req, res) => {
+    try {
+        if (!CREATOMATE_API_KEY) {
+            return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
+        }
+        const jobId = String(req.body?.jobId || '').trim();
+        if (!jobId)
+            return res.status(400).json({ success: false, error: 'jobId is required' });
+        const job = await getPalVideoJob(jobId);
+        if (!job)
+            return res.status(404).json({ success: false, error: 'job not found' });
+        const result = await renderCreatomateJob(req, job);
+        return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
+    }
+    catch (error) {
+        console.error('[pal-db] pal-video render failed', error);
+        const message = error instanceof Error ? error.message : 'failed to render pal_video';
+        return res.status(500).json({ success: false, error: message });
+    }
+});
 app.post('/api/service-subscriptions', async (req, res) => {
     try {
         const service = await upsertServiceSubscription(req.body || {});
@@ -295,6 +794,111 @@ app.post('/api/chat-auth/verify', async (req, res) => {
     catch (error) {
         console.error(error);
         return res.status(500).json({ success: false, error: 'failed to verify credentials' });
+    }
+});
+// ── pal_opt settings endpoints ──────────────────────────────────────────────
+app.get('/api/pal-opt-settings', async (req, res) => {
+    try {
+        await ensureTables();
+        const paletteId = String(req.query.paletteId || '').trim().toUpperCase();
+        if (!paletteId) {
+            return res.status(400).json({ success: false, error: 'paletteId is required' });
+        }
+        const { sql } = await import('@vercel/postgres');
+        const { rows } = await sql `SELECT * FROM pal_opt_settings WHERE palette_id = ${paletteId} LIMIT 1`;
+        return res.json({ success: true, settings: rows[0] || null });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to fetch pal_opt settings' });
+    }
+});
+app.post('/api/pal-opt-settings', async (req, res) => {
+    try {
+        await ensureTables();
+        const { sql } = await import('@vercel/postgres');
+        const b = req.body;
+        const paletteId = String(b.paletteId || '').trim().toUpperCase();
+        if (!paletteId)
+            return res.status(400).json({ success: false, error: 'paletteId is required' });
+        const { randomUUID } = await import('crypto');
+        const id = randomUUID();
+        const keywords = JSON.stringify(Array.isArray(b.targetKeywords) ? b.targetKeywords : []);
+        await sql `
+      INSERT INTO pal_opt_settings (
+        id, palette_id, ig_access_token, ig_business_account_id,
+        gbp_access_token, gbp_refresh_token, gbp_location_id,
+        blog_url, blog_wp_username, blog_api_key,
+        target_keywords, goals, default_tone, has_pal_studio, has_pal_trust
+      ) VALUES (
+        ${id}, ${paletteId}, ${b.igAccessToken ?? null}, ${b.igBusinessAccountId ?? null},
+        ${b.gbpAccessToken ?? null}, ${b.gbpRefreshToken ?? null}, ${b.gbpLocationId ?? null},
+        ${b.blogUrl ?? null}, ${b.blogWpUsername ?? null}, ${b.blogApiKey ?? null},
+        ${keywords}::jsonb, ${b.goals ?? null}, ${b.defaultTone ?? 'professional'},
+        ${Boolean(b.hasPalStudio)}, ${Boolean(b.hasPalTrust)}
+      )
+      ON CONFLICT (palette_id) DO UPDATE SET
+        ig_access_token = EXCLUDED.ig_access_token,
+        ig_business_account_id = EXCLUDED.ig_business_account_id,
+        gbp_access_token = EXCLUDED.gbp_access_token,
+        gbp_refresh_token = EXCLUDED.gbp_refresh_token,
+        gbp_location_id = EXCLUDED.gbp_location_id,
+        blog_url = EXCLUDED.blog_url,
+        blog_wp_username = EXCLUDED.blog_wp_username,
+        blog_api_key = EXCLUDED.blog_api_key,
+        target_keywords = EXCLUDED.target_keywords,
+        goals = EXCLUDED.goals,
+        default_tone = EXCLUDED.default_tone,
+        has_pal_studio = EXCLUDED.has_pal_studio,
+        has_pal_trust = EXCLUDED.has_pal_trust,
+        updated_at = NOW()
+    `;
+        const { rows } = await sql `SELECT * FROM pal_opt_settings WHERE palette_id = ${paletteId} LIMIT 1`;
+        return res.json({ success: true, settings: rows[0] || null });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to upsert pal_opt settings' });
+    }
+});
+// ── pal_opt posts endpoints ──────────────────────────────────────────────────
+app.get('/api/pal-opt-posts', async (req, res) => {
+    try {
+        await ensureTables();
+        const { sql } = await import('@vercel/postgres');
+        const paletteId = String(req.query.paletteId || '').trim().toUpperCase();
+        const status = String(req.query.status || '').trim();
+        const limit = Math.min(Number(req.query.limit || 20), 100);
+        let rows;
+        if (paletteId && status) {
+            ({ rows } = await sql `SELECT * FROM pal_opt_posts WHERE palette_id = ${paletteId} AND status = ${status} ORDER BY updated_at DESC LIMIT ${limit}`);
+        }
+        else if (paletteId) {
+            ({ rows } = await sql `SELECT * FROM pal_opt_posts WHERE palette_id = ${paletteId} ORDER BY updated_at DESC LIMIT ${limit}`);
+        }
+        else {
+            ({ rows } = await sql `SELECT * FROM pal_opt_posts ORDER BY updated_at DESC LIMIT ${limit}`);
+        }
+        return res.json({ success: true, posts: rows });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to fetch pal_opt posts' });
+    }
+});
+app.delete('/api/pal-opt-posts/:id', async (req, res) => {
+    try {
+        await ensureTables();
+        const { sql } = await import('@vercel/postgres');
+        const postId = String(req.params.id || '').trim();
+        if (!postId)
+            return res.status(400).json({ success: false, error: 'post id is required' });
+        await sql `DELETE FROM pal_opt_posts WHERE id = ${postId}`;
+        return res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, error: 'failed to delete pal_opt post' });
     }
 });
 app.listen(port, async () => {

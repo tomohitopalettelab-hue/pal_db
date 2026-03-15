@@ -36,6 +36,9 @@ const normalizeServiceKey = (value) => {
     if (compact === 'trust' || compact === 'pal_trust') {
         return 'pal_trust';
     }
+    if (compact === 'opt' || compact === 'pal_opt' || compact === 'palopt') {
+        return 'pal_opt';
+    }
     return compact;
 };
 const hashPassword = (plainPassword) => {
@@ -113,6 +116,7 @@ const normalizeAccount = (row) => ({
     contactEmail: asNullableString(row.contact_email),
     status: asString(row.status, 'active'),
     notes: asNullableString(row.notes),
+    industry: asNullableString(row.industry),
     chatLoginId: asNullableString(row.chat_login_id),
     chatPassword: asNullableString(row.chat_password_plain),
     chatPasswordSet: Boolean(asNullableString(row.chat_password_hash)),
@@ -169,6 +173,27 @@ const normalizeServiceSubscription = (row) => ({
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
 });
+const normalizePalVideoJob = (row) => ({
+    id: asString(row.id),
+    paletteId: asString(row.palette_id),
+    planCode: asString(row.plan_code),
+    status: asString(row.status, '編集中'),
+    payload: (row.payload || {}),
+    previewUrl: asNullableString(row.preview_url),
+    youtubeUrl: asNullableString(row.youtube_url),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+});
+const normalizeMediaAsset = (row) => ({
+    id: asString(row.id),
+    paletteId: asString(row.palette_id),
+    fileName: asString(row.file_name),
+    originalName: asString(row.original_name),
+    mimeType: asString(row.mime_type),
+    sizeBytes: asNumber(row.size_bytes, 0),
+    url: asString(row.url),
+    createdAt: toIso(row.created_at),
+});
 const normalizeAccountStatusOption = (row) => ({
     id: asString(row.id),
     value: asString(row.value),
@@ -196,6 +221,10 @@ export const ensureTables = async () => {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `;
+    await sql `
+    ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS industry TEXT
   `;
     await sql `
     ALTER TABLE accounts
@@ -359,6 +388,31 @@ export const ensureTables = async () => {
     )
   `;
     await sql `
+    CREATE TABLE IF NOT EXISTS pal_video_jobs (
+      id TEXT PRIMARY KEY,
+      palette_id TEXT NOT NULL,
+      plan_code TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT '編集中',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      preview_url TEXT,
+      youtube_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS media_assets (
+      id TEXT PRIMARY KEY,
+      palette_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      original_name TEXT NOT NULL DEFAULT '',
+      mime_type TEXT NOT NULL DEFAULT '',
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      url TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+    await sql `
     CREATE TABLE IF NOT EXISTS account_status_options (
       id TEXT PRIMARY KEY,
       value TEXT NOT NULL UNIQUE,
@@ -376,6 +430,11 @@ export const ensureTables = async () => {
     await sql `CREATE INDEX IF NOT EXISTS contracts_phase_idx ON contracts (phase)`;
     await sql `CREATE INDEX IF NOT EXISTS service_subscriptions_account_id_idx ON service_subscriptions (account_id)`;
     await sql `CREATE INDEX IF NOT EXISTS service_subscriptions_service_key_idx ON service_subscriptions (service_key)`;
+    await sql `CREATE INDEX IF NOT EXISTS pal_video_jobs_palette_id_idx ON pal_video_jobs (palette_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS pal_video_jobs_status_idx ON pal_video_jobs (status)`;
+    await sql `CREATE INDEX IF NOT EXISTS pal_video_jobs_updated_at_idx ON pal_video_jobs (updated_at)`;
+    await sql `CREATE INDEX IF NOT EXISTS media_assets_palette_id_idx ON media_assets (palette_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS media_assets_created_at_idx ON media_assets (created_at)`;
     await sql `CREATE INDEX IF NOT EXISTS contract_options_type_active_idx ON contract_options (option_type, is_active, sort_order, updated_at)`;
     await sql `CREATE INDEX IF NOT EXISTS account_status_options_active_idx ON account_status_options (is_active, sort_order, updated_at)`;
     await sql `
@@ -448,12 +507,65 @@ export const ensureTables = async () => {
       ('acc-status-inactive', 'inactive', '停止中', 20)
     ON CONFLICT (value) DO NOTHING
   `;
+    // pal_opt tables
+    await sql `
+    CREATE TABLE IF NOT EXISTS pal_opt_settings (
+      id                      TEXT PRIMARY KEY,
+      palette_id              TEXT NOT NULL UNIQUE,
+      ig_access_token         TEXT,
+      ig_business_account_id  TEXT,
+      gbp_access_token        TEXT,
+      gbp_refresh_token       TEXT,
+      gbp_location_id         TEXT,
+      blog_url                TEXT,
+      blog_wp_username        TEXT,
+      blog_api_key            TEXT,
+      target_keywords         JSONB NOT NULL DEFAULT '[]',
+      goals                   TEXT,
+      default_tone            TEXT NOT NULL DEFAULT 'professional',
+      has_pal_studio          BOOLEAN NOT NULL DEFAULT FALSE,
+      has_pal_trust           BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+    await sql `
+    CREATE TABLE IF NOT EXISTS pal_opt_posts (
+      id                  TEXT PRIMARY KEY,
+      palette_id          TEXT NOT NULL,
+      title               TEXT NOT NULL DEFAULT '',
+      topic               TEXT NOT NULL DEFAULT '',
+      keywords            JSONB NOT NULL DEFAULT '[]',
+      target_audience     TEXT,
+      image_urls          JSONB NOT NULL DEFAULT '[]',
+      status              TEXT NOT NULL DEFAULT 'draft',
+      instagram_caption   TEXT,
+      instagram_image_url TEXT,
+      instagram_post_id   TEXT,
+      blog_title          TEXT,
+      blog_body_html      TEXT,
+      blog_slug           TEXT,
+      blog_post_id        TEXT,
+      gbp_summary         TEXT,
+      gbp_call_to_action  TEXT,
+      gbp_post_id         TEXT,
+      published_platforms JSONB NOT NULL DEFAULT '[]',
+      error_log           TEXT,
+      approved_at         TIMESTAMPTZ,
+      published_at        TIMESTAMPTZ,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+    await sql `CREATE INDEX IF NOT EXISTS pal_opt_posts_palette_id_idx ON pal_opt_posts (palette_id)`;
+    await sql `CREATE INDEX IF NOT EXISTS pal_opt_posts_status_idx ON pal_opt_posts (status)`;
+    await sql `CREATE INDEX IF NOT EXISTS pal_opt_posts_updated_at_idx ON pal_opt_posts (updated_at DESC)`;
     initialized = true;
 };
 export const listAccounts = async () => {
     await ensureTables();
     const result = await sql `
-    SELECT id, palette_id, name, contact_email, status, notes, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
+    SELECT id, palette_id, name, contact_email, status, notes, industry, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
     FROM accounts
     ORDER BY updated_at DESC
   `;
@@ -495,6 +607,7 @@ export const upsertAccount = async (input) => {
     const contactEmail = asNullableString(input.contactEmail);
     const status = asString(input.status, 'active');
     const notes = asNullableString(input.notes);
+    const industry = asNullableString(input.industry);
     const hasChatLoginId = Object.prototype.hasOwnProperty.call(input, 'chatLoginId');
     const hasChatPassword = Object.prototype.hasOwnProperty.call(input, 'chatPassword');
     const chatLoginId = hasChatLoginId
@@ -512,8 +625,8 @@ export const upsertAccount = async (input) => {
         : (existingAccount.chat_password_updated_at ? toIso(existingAccount.chat_password_updated_at) : null);
     const updatedAt = toIso(input.updatedAt || new Date());
     const result = await sql `
-    INSERT INTO accounts (id, palette_id, name, contact_email, status, notes, chat_login_id, chat_password_hash, chat_password_plain, chat_password_updated_at, updated_at)
-    VALUES (${id}, ${paletteId}, ${name}, ${contactEmail}, ${status}, ${notes}, ${chatLoginId}, ${chatPasswordHash}, ${chatPasswordPlain}, ${chatPasswordUpdatedAt}, ${updatedAt}::timestamptz)
+    INSERT INTO accounts (id, palette_id, name, contact_email, status, notes, industry, chat_login_id, chat_password_hash, chat_password_plain, chat_password_updated_at, updated_at)
+    VALUES (${id}, ${paletteId}, ${name}, ${contactEmail}, ${status}, ${notes}, ${industry}, ${chatLoginId}, ${chatPasswordHash}, ${chatPasswordPlain}, ${chatPasswordUpdatedAt}, ${updatedAt}::timestamptz)
     ON CONFLICT (id)
     DO UPDATE SET
       palette_id = EXCLUDED.palette_id,
@@ -521,12 +634,13 @@ export const upsertAccount = async (input) => {
       contact_email = EXCLUDED.contact_email,
       status = EXCLUDED.status,
       notes = EXCLUDED.notes,
+      industry = EXCLUDED.industry,
       chat_login_id = EXCLUDED.chat_login_id,
       chat_password_hash = EXCLUDED.chat_password_hash,
       chat_password_plain = EXCLUDED.chat_password_plain,
       chat_password_updated_at = EXCLUDED.chat_password_updated_at,
       updated_at = EXCLUDED.updated_at
-    RETURNING id, palette_id, name, contact_email, status, notes, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
+    RETURNING id, palette_id, name, contact_email, status, notes, industry, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
   `;
     return normalizeAccount(result.rows[0]);
 };
@@ -873,10 +987,194 @@ export const upsertServiceSubscription = async (input) => {
   `;
     return normalizeServiceSubscription(result.rows[0]);
 };
+export const listPalVideoJobs = async (options) => {
+    await ensureTables();
+    const paletteId = options?.paletteId?.trim();
+    const status = options?.status?.trim();
+    const limit = Number(options?.limit || 0);
+    if (paletteId) {
+        if (status) {
+            const result = limit > 0
+                ? await sql `
+            SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+            FROM pal_video_jobs
+            WHERE palette_id = ${paletteId} AND status = ${status}
+            ORDER BY updated_at DESC
+            LIMIT ${limit}
+          `
+                : await sql `
+            SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+            FROM pal_video_jobs
+            WHERE palette_id = ${paletteId} AND status = ${status}
+            ORDER BY updated_at DESC
+          `;
+            return result.rows.map((row) => normalizePalVideoJob(row));
+        }
+        const result = limit > 0
+            ? await sql `
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE palette_id = ${paletteId}
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `
+            : await sql `
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE palette_id = ${paletteId}
+          ORDER BY updated_at DESC
+        `;
+        return result.rows.map((row) => normalizePalVideoJob(row));
+    }
+    if (status) {
+        const result = limit > 0
+            ? await sql `
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE status = ${status}
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `
+            : await sql `
+          SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+          FROM pal_video_jobs
+          WHERE status = ${status}
+          ORDER BY updated_at DESC
+        `;
+        return result.rows.map((row) => normalizePalVideoJob(row));
+    }
+    const result = limit > 0
+        ? await sql `
+        SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+        FROM pal_video_jobs
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `
+        : await sql `
+        SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+        FROM pal_video_jobs
+        ORDER BY updated_at DESC
+      `;
+    return result.rows.map((row) => normalizePalVideoJob(row));
+};
+export const getPalVideoJob = async (id) => {
+    await ensureTables();
+    const jobId = asString(id).trim();
+    if (!jobId)
+        return null;
+    const result = await sql `
+    SELECT id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+    FROM pal_video_jobs
+    WHERE id = ${jobId}
+    LIMIT 1
+  `;
+    if (!result.rows?.[0])
+        return null;
+    return normalizePalVideoJob(result.rows[0]);
+};
+export const listMediaAssets = async (paletteId) => {
+    await ensureTables();
+    const normalizedPaletteId = normalizePaletteId(paletteId);
+    const result = await sql `
+    SELECT id, palette_id, file_name, original_name, mime_type, size_bytes, url, created_at
+    FROM media_assets
+    WHERE palette_id = ${normalizedPaletteId}
+    ORDER BY created_at DESC
+  `;
+    return result.rows.map((row) => normalizeMediaAsset(row));
+};
+export const getMediaAssetById = async (id) => {
+    await ensureTables();
+    const assetId = asString(id).trim();
+    if (!assetId)
+        return null;
+    const result = await sql `
+    SELECT id, palette_id, file_name, original_name, mime_type, size_bytes, url, created_at
+    FROM media_assets
+    WHERE id = ${assetId}
+    LIMIT 1
+  `;
+    if (!result.rows?.[0])
+        return null;
+    return normalizeMediaAsset(result.rows[0]);
+};
+export const createMediaAsset = async (input) => {
+    await ensureTables();
+    const paletteId = normalizePaletteId(input.paletteId);
+    const id = generateId('media');
+    const fileName = asString(input.fileName).trim();
+    const originalName = asString(input.originalName, '');
+    const mimeType = asString(input.mimeType, '');
+    const sizeBytes = asNumber(input.sizeBytes, 0);
+    const url = asString(input.url).trim();
+    if (!fileName) {
+        throw new Error('fileName is required');
+    }
+    if (!url) {
+        throw new Error('url is required');
+    }
+    const result = await sql `
+    INSERT INTO media_assets (id, palette_id, file_name, original_name, mime_type, size_bytes, url)
+    VALUES (${id}, ${paletteId}, ${fileName}, ${originalName}, ${mimeType}, ${sizeBytes}, ${url})
+    RETURNING id, palette_id, file_name, original_name, mime_type, size_bytes, url, created_at
+  `;
+    return normalizeMediaAsset(result.rows[0]);
+};
+export const deleteMediaAsset = async (id) => {
+    await ensureTables();
+    const assetId = asString(id).trim();
+    if (!assetId)
+        return;
+    await sql `DELETE FROM media_assets WHERE id = ${assetId}`;
+};
+export const upsertPalVideoJob = async (input) => {
+    await ensureTables();
+    const id = asString(input.id, generateId('pv'));
+    const paletteId = normalizePaletteId(input.paletteId);
+    const planCode = asString(input.planCode, 'pal_video_lite').trim();
+    const status = asString(input.status, '編集中').trim();
+    const payload = (input.payload || input.payload === null) ? (input.payload || {}) : {};
+    const previewUrl = asNullableString(input.previewUrl);
+    const youtubeUrl = asNullableString(input.youtubeUrl);
+    const updatedAt = toIso(input.updatedAt || new Date());
+    const result = await sql `
+    INSERT INTO pal_video_jobs (
+      id,
+      palette_id,
+      plan_code,
+      status,
+      payload,
+      preview_url,
+      youtube_url,
+      updated_at
+    )
+    VALUES (
+      ${id},
+      ${paletteId},
+      ${planCode},
+      ${status},
+      ${JSON.stringify(payload)}::jsonb,
+      ${previewUrl},
+      ${youtubeUrl},
+      ${updatedAt}::timestamptz
+    )
+    ON CONFLICT (id)
+    DO UPDATE SET
+      palette_id = EXCLUDED.palette_id,
+      plan_code = EXCLUDED.plan_code,
+      status = EXCLUDED.status,
+      payload = EXCLUDED.payload,
+      preview_url = EXCLUDED.preview_url,
+      youtube_url = EXCLUDED.youtube_url,
+      updated_at = EXCLUDED.updated_at
+    RETURNING id, palette_id, plan_code, status, payload, preview_url, youtube_url, created_at, updated_at
+  `;
+    return normalizePalVideoJob(result.rows[0]);
+};
 export const getPaletteSummary = async (paletteId, activeOn) => {
     await ensureTables();
     const accountRes = await sql `
-    SELECT id, palette_id, name, contact_email, status, notes, created_at, updated_at
+    SELECT id, palette_id, name, contact_email, status, notes, industry, created_at, updated_at
     FROM accounts
     WHERE palette_id = ${paletteId}
     LIMIT 1
@@ -914,7 +1212,12 @@ export const deleteAccount = async (id) => {
 };
 export const deletePlan = async (id) => {
     await ensureTables();
-    await sql `DELETE FROM service_plans WHERE id = ${id}`;
+    await sql `
+    UPDATE service_plans
+    SET is_active = FALSE,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `;
 };
 export const deleteContract = async (id) => {
     await ensureTables();
@@ -1074,7 +1377,7 @@ export const verifyChatLogin = async (loginIdInput, passwordInput) => {
     if (!loginId || !password)
         return { success: false };
     const result = await sql `
-    SELECT id, palette_id, name, chat_password_hash
+    SELECT id, palette_id, name, chat_password_hash, chat_password_plain
     FROM accounts
     WHERE chat_login_id = ${loginId} OR palette_id = ${loginId}
     LIMIT 1
@@ -1083,8 +1386,16 @@ export const verifyChatLogin = async (loginIdInput, passwordInput) => {
         return { success: false };
     const row = (result.rows[0] || {});
     const storedHash = asNullableString(row.chat_password_hash);
-    if (!storedHash || !verifyPassword(password, storedHash)) {
-        return { success: false };
+    if (storedHash) {
+        if (!verifyPassword(password, storedHash)) {
+            return { success: false };
+        }
+    }
+    else {
+        const storedPlain = asNullableString(row.chat_password_plain);
+        if (!storedPlain || normalizePasswordInput(storedPlain) !== password) {
+            return { success: false };
+        }
     }
     return {
         success: true,

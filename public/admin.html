@@ -269,6 +269,7 @@
           <div class="form-group"><label>顧客ID</label><input id="accPalette" readonly /></div>
           <div class="form-group"><label>顧客名</label><input id="accName" /></div>
           <div class="form-group"><label>屋号名</label><input id="accShopName" /></div>
+          <div class="form-group"><label>業種</label><input id="accIndustry" placeholder="例: 美容室、歯科医院、飲食店" /></div>
           <div class="form-group"><label>個人名</label><input id="accPersonName" /></div>
           <div class="form-group"><label>個人名フリガナ</label><input id="accPersonKana" /></div>
           <div class="form-group"><label>郵便番号</label><input id="accZip" /></div>
@@ -943,6 +944,7 @@
         document.getElementById('accPalette').value = account.paletteId || '';
         document.getElementById('accName').value = account.name || '';
         document.getElementById('accShopName').value = account.shopName || '';
+        document.getElementById('accIndustry').value = account.industry || '';
         document.getElementById('accPersonName').value = account.personName || '';
         document.getElementById('accPersonKana').value = account.personKana || '';
         document.getElementById('accZip').value = account.zip || '';
@@ -993,6 +995,7 @@
             status: document.getElementById('accStatus').value,
             // 拡張項目
             shopName: document.getElementById('accShopName').value,
+            industry: document.getElementById('accIndustry').value || null,
             personName: document.getElementById('accPersonName').value,
             personKana: document.getElementById('accPersonKana').value,
             zip: document.getElementById('accZip').value,

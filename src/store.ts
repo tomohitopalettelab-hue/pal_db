@@ -8,6 +8,7 @@ export type AccountRecord = {
   contactEmail: string | null;
   status: string;
   notes: string | null;
+  industry: string | null;
   chatLoginId: string | null;
   chatPassword: string | null;
   chatPasswordSet: boolean;
@@ -235,6 +236,7 @@ const normalizeAccount = (row: Row): AccountRecord => ({
   contactEmail: asNullableString(row.contact_email),
   status: asString(row.status, 'active'),
   notes: asNullableString(row.notes),
+  industry: asNullableString(row.industry),
   chatLoginId: asNullableString(row.chat_login_id),
   chatPassword: asNullableString(row.chat_password_plain),
   chatPasswordSet: Boolean(asNullableString(row.chat_password_hash)),
@@ -349,6 +351,10 @@ export const ensureTables = async () => {
     )
   `;
 
+  await sql`
+    ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS industry TEXT
+  `;
   await sql`
     ALTER TABLE accounts
     ADD COLUMN IF NOT EXISTS chat_login_id TEXT
@@ -709,7 +715,7 @@ export const ensureTables = async () => {
 export const listAccounts = async (): Promise<AccountRecord[]> => {
   await ensureTables();
   const result = await sql`
-    SELECT id, palette_id, name, contact_email, status, notes, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
+    SELECT id, palette_id, name, contact_email, status, notes, industry, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
     FROM accounts
     ORDER BY updated_at DESC
   `;
@@ -754,6 +760,7 @@ export const upsertAccount = async (input: Partial<AccountRecord> & { chatPasswo
   const contactEmail = asNullableString(input.contactEmail);
   const status = asString(input.status, 'active');
   const notes = asNullableString(input.notes);
+  const industry = asNullableString((input as { industry?: string | null }).industry);
   const hasChatLoginId = Object.prototype.hasOwnProperty.call(input, 'chatLoginId');
   const hasChatPassword = Object.prototype.hasOwnProperty.call(input, 'chatPassword');
   const chatLoginId = hasChatLoginId
@@ -773,8 +780,8 @@ export const upsertAccount = async (input: Partial<AccountRecord> & { chatPasswo
   const updatedAt = toIso(input.updatedAt || new Date());
 
   const result = await sql`
-    INSERT INTO accounts (id, palette_id, name, contact_email, status, notes, chat_login_id, chat_password_hash, chat_password_plain, chat_password_updated_at, updated_at)
-    VALUES (${id}, ${paletteId}, ${name}, ${contactEmail}, ${status}, ${notes}, ${chatLoginId}, ${chatPasswordHash}, ${chatPasswordPlain}, ${chatPasswordUpdatedAt}, ${updatedAt}::timestamptz)
+    INSERT INTO accounts (id, palette_id, name, contact_email, status, notes, industry, chat_login_id, chat_password_hash, chat_password_plain, chat_password_updated_at, updated_at)
+    VALUES (${id}, ${paletteId}, ${name}, ${contactEmail}, ${status}, ${notes}, ${industry}, ${chatLoginId}, ${chatPasswordHash}, ${chatPasswordPlain}, ${chatPasswordUpdatedAt}, ${updatedAt}::timestamptz)
     ON CONFLICT (id)
     DO UPDATE SET
       palette_id = EXCLUDED.palette_id,
@@ -782,12 +789,13 @@ export const upsertAccount = async (input: Partial<AccountRecord> & { chatPasswo
       contact_email = EXCLUDED.contact_email,
       status = EXCLUDED.status,
       notes = EXCLUDED.notes,
+      industry = EXCLUDED.industry,
       chat_login_id = EXCLUDED.chat_login_id,
       chat_password_hash = EXCLUDED.chat_password_hash,
       chat_password_plain = EXCLUDED.chat_password_plain,
       chat_password_updated_at = EXCLUDED.chat_password_updated_at,
       updated_at = EXCLUDED.updated_at
-    RETURNING id, palette_id, name, contact_email, status, notes, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
+    RETURNING id, palette_id, name, contact_email, status, notes, industry, chat_login_id, chat_password_hash, chat_password_plain, created_at, updated_at
   `;
 
   return normalizeAccount(result.rows[0] as Row);
@@ -1368,7 +1376,7 @@ export const getPaletteSummary = async (paletteId: string, activeOn?: string) =>
   await ensureTables();
 
   const accountRes = await sql`
-    SELECT id, palette_id, name, contact_email, status, notes, created_at, updated_at
+    SELECT id, palette_id, name, contact_email, status, notes, industry, created_at, updated_at
     FROM accounts
     WHERE palette_id = ${paletteId}
     LIMIT 1

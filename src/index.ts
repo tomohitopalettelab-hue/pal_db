@@ -198,85 +198,182 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
   const bgmRaw = String(payload?.bgm || '');
   const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
 
-  // ── Scene-level transition resolver (uses cut.transition + index for variety) ─
+  // ── 3 Layout types (cycling per scene) ───────────────────────────────────────
+  // bottom: lower-third (Instagram/TikTok classic)
+  // top:    upper-third (fresh contrast)
+  // center: full-screen centered statement (impactful)
+  type LayoutType = 'bottom' | 'top' | 'center';
+  const LAYOUT_SEQ: LayoutType[] = ['bottom', 'top', 'bottom', 'center', 'bottom', 'top', 'bottom'];
+
+  // Position constants per layout + orientation
+  const getLayoutProps = (layout: LayoutType) => {
+    const barW = isVertical ? '1.1 vmin' : '0.75 vmin';
+    const baseTextW = isWide ? '52%' : isVertical ? '82%' : '78%';
+
+    if (layout === 'top') {
+      return {
+        overlayMajorH: isVertical ? '44%' : '47%',
+        overlayMajorY: '0%', overlayMajorAnchorY: '0%',
+        overlayMinorH: isVertical ? '22%' : '25%' as string | null,
+        overlayMinorY: '0%' as string | null, overlayMinorAnchorY: '0%' as string | null,
+        barX: isWide ? '7%' : '10%', barY: isVertical ? '10%' : '9%',
+        barW, barH: isWide ? '18%' : '16%', barAnchorY: '0%', barDir: 'down' as const,
+        textIndent: isVertical ? '14%' : isWide ? '10%' : '13%',
+        textWidth: baseTextW,
+        titleY: isVertical ? '11%' : '10%', subY: isVertical ? '20%' : '19%',
+        titleAnchorY: '0%', subAnchorY: '0%',
+        titleSize: isVertical ? '5.5 vmin' : isSquare ? '5 vmin' : '5.5 vmin',
+        subSize:   isVertical ? '3.0 vmin' : isSquare ? '3.2 vmin' : '3.4 vmin',
+        centerX: false,
+      };
+    }
+    if (layout === 'center') {
+      return {
+        overlayMajorH: '100%',
+        overlayMajorY: '50%', overlayMajorAnchorY: '50%',
+        overlayMinorH: null as string | null,
+        overlayMinorY: null as string | null, overlayMinorAnchorY: null as string | null,
+        barX: null as string | null, barY: null as string | null,
+        barW: null as string | null, barH: null as string | null,
+        barAnchorY: null as string | null, barDir: null as 'up' | 'down' | null,
+        textIndent: '50%',
+        textWidth: isWide ? '72%' : isVertical ? '80%' : '78%',
+        titleY: isVertical ? '44%' : '42%', subY: isVertical ? '56%' : '54%',
+        titleAnchorY: '50%', subAnchorY: '0%',
+        titleSize: isVertical ? '7 vmin' : isSquare ? '6.5 vmin' : '7 vmin',
+        subSize:   isVertical ? '3.5 vmin' : isSquare ? '3.8 vmin' : '3.8 vmin',
+        centerX: true,
+      };
+    }
+    // bottom (default)
+    return {
+      overlayMajorH: isVertical ? '45%' : '48%',
+      overlayMajorY: '100%', overlayMajorAnchorY: '100%',
+      overlayMinorH: isVertical ? '25%' : '28%' as string | null,
+      overlayMinorY: '100%' as string | null, overlayMinorAnchorY: '100%' as string | null,
+      barX: isWide ? '7%' : '10%',
+      barY: isVertical ? '64%' : isSquare ? '59%' : '57%',
+      barW, barH: isWide ? '22%' : '20%', barAnchorY: '0%', barDir: 'up' as const,
+      textIndent: isVertical ? '14%' : isWide ? '10%' : '13%',
+      textWidth: baseTextW,
+      titleY: isVertical ? '66.5%' : isSquare ? '61%' : '59.5%',
+      subY:   isVertical ? '73.5%' : isSquare ? '69.5%' : '68%',
+      titleAnchorY: '100%', subAnchorY: '0%',
+      titleSize: isVertical ? '5.8 vmin' : isSquare ? '5.2 vmin' : '5.8 vmin',
+      subSize:   isVertical ? '3.2 vmin' : isSquare ? '3.5 vmin' : '3.6 vmin',
+      centerX: false,
+    };
+  };
+
+  // ── Scene transition resolver (8 types + smart auto-cycle) ───────────────────
   const resolveSceneTransition = (transition: string, idx: number) => {
     const t = String(transition || '').toLowerCase();
     if (t === 'none') return { animations: [], exit_animations: [] };
 
-    // Slide: alternate direction so consecutive slides feel different
+    if (t === 'fade') return {
+      animations:      [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+      exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
+    };
     if (t === 'slide') {
-      const dirs = ['left', 'right', 'left', 'up', 'right'] as const;
+      const dirs = ['left', 'right', 'up', 'left', 'right'] as const;
       return {
         animations:      [{ type: 'slide', direction: dirs[idx % dirs.length], duration: 0.5, fade: false, easing: 'quadratic-out' }],
-        exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
+        exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
       };
     }
-    // Zoom: alternate zoom-in / zoom-out entrance
     if (t === 'zoom') {
       const startScale = idx % 2 === 0 ? '107%' : '94%';
+      const easing = idx % 2 === 0 ? 'quadratic-out' : 'back-out';
       return {
-        animations:      [{ type: 'scale', start_scale: startScale, end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
-        exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
+        animations:      [{ type: 'scale', start_scale: startScale, end_scale: '100%', fade: true, duration: 0.55, easing }],
+        exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
       };
     }
-    // Auto / fade: cycle through fade → slide → zoom → slide(rev) → zoom(rev)
-    const cycle = idx % 5;
-    if (cycle === 0 || cycle === 4) {
+    if (t === 'wipe') {
+      const dirs = ['right', 'up', 'left', 'up', 'right'] as const;
       return {
-        animations:      [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
-        exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in'  }],
+        animations:      [{ type: 'wipe', direction: dirs[idx % dirs.length], duration: 0.5, easing: 'quadratic-out' }],
+        exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
       };
     }
-    if (cycle === 1 || cycle === 3) {
-      const dir = cycle === 1 ? 'left' : 'right';
+    if (t === 'color-wipe') {
+      const dirs = ['right', 'up', 'left', 'down', 'right'] as const;
       return {
-        animations:      [{ type: 'slide', direction: dir, duration: 0.5, fade: false, easing: 'quadratic-out' }],
-        exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
+        animations:      [{ type: 'color-wipe', direction: dirs[idx % dirs.length], color: colorAccent, duration: 0.6, easing: 'quadratic-out' }],
+        exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
       };
     }
-    // cycle === 2
-    return {
-      animations:      [{ type: 'scale', start_scale: '106%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
-      exit_animations: [{ type: 'fade',  duration: 0.35, easing: 'quadratic-in' }],
-    };
+    if (t === 'flip') {
+      const rot = idx % 2 === 0 ? '-12°' : '12°';
+      return {
+        animations:      [{ type: 'spin', rotation: rot, fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
+      };
+    }
+    // Auto: smart 8-pattern cycle
+    const AUTO = [
+      { animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],                                               exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
+      { animations: [{ type: 'slide', direction: 'left',  duration: 0.5, fade: false, easing: 'quadratic-out' }],             exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+      { animations: [{ type: 'scale', start_scale: '107%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+      { animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }],                           exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+      { animations: [{ type: 'slide', direction: 'up',   duration: 0.5, fade: false, easing: 'quadratic-out' }],              exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+      { animations: [{ type: 'scale', start_scale: '94%',  end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }],  exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+      { animations: [{ type: 'slide', direction: 'right', duration: 0.5, fade: false, easing: 'quadratic-out' }],             exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+      { animations: [{ type: 'color-wipe', direction: 'right', color: colorAccent, duration: 0.6, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.4,  easing: 'quadratic-in' }] },
+    ];
+    return AUTO[idx % AUTO.length];
   };
 
-  // ── Text animation resolver (uses cut.animation + index) ─────────────────────
-  const resolveTitleAnim = (animation: string, idx: number): any[] => {
+  // ── Text animation resolvers (7 types) ───────────────────────────────────────
+  const resolveTitleAnim = (animation: string, idx: number, layout: LayoutType): any[] => {
     const a = String(animation || '').toLowerCase();
     if (a === 'none') return [];
     if (a === 'fade') return [{ type: 'fade', duration: 0.6, easing: 'quadratic-out' }];
-    if (a === 'zoom') return [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.6, easing: 'quadratic-out' }];
-    // 'slide' or default: rotate through directions so no two consecutive cuts are the same
+    if (a === 'zoom') return [{ type: 'scale', start_scale: '86%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }];
+    if (a === 'pop')  return [{ type: 'scale', start_scale: '78%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }];
+    if (a === 'blur') return [{ type: 'blur',  blur: 20, fade: true, duration: 0.7, easing: 'quadratic-out' }];
+    if (a === 'wipe') return [{ type: 'wipe',  direction: 'right', duration: 0.6, easing: 'quadratic-out' }];
+    // 'slide' or default – layout-aware direction
+    if (layout === 'center') return [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }];
+    if (layout === 'top') {
+      const dirs = ['down', 'left', 'down', 'right'] as const;
+      return [{ type: 'slide', direction: dirs[idx % dirs.length], distance: '8%', fade: true, duration: 0.55, easing: 'quadratic-out' }];
+    }
     const dirs = ['up', 'right', 'up', 'left', 'up', 'right', 'up'] as const;
     const dir  = dirs[idx % dirs.length];
-    const dist = dir === 'up' ? '10%' : '7%';
-    return [{ type: 'slide', direction: dir, distance: dist, fade: true, duration: 0.55, easing: 'quadratic-out' }];
+    return [{ type: 'slide', direction: dir, distance: dir === 'up' ? '10%' : '7%', fade: true, duration: 0.55, easing: 'quadratic-out' }];
   };
 
   const resolveSubAnim = (animation: string, idx: number): any[] => {
     const a = String(animation || '').toLowerCase();
     if (a === 'none') return [];
-    if (a === 'zoom') return [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }];
-    // Alternate sub-animation so it differs from title
-    const cycle = idx % 3;
-    if (cycle === 0) return [{ type: 'slide', direction: 'up', distance: '6%', fade: true, duration: 0.5, easing: 'quadratic-out' }];
-    if (cycle === 1) return [{ type: 'fade', duration: 0.65, easing: 'quadratic-out' }];
-    return [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.5, easing: 'quadratic-out' }];
+    if (a === 'blur') return [{ type: 'blur',  blur: 14, fade: true, duration: 0.65, easing: 'quadratic-out' }];
+    if (a === 'zoom') return [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }];
+    if (a === 'pop')  return [{ type: 'scale', start_scale: '86%', end_scale: '100%', fade: true, duration: 0.5,  easing: 'back-out' }];
+    if (a === 'fade') return [{ type: 'fade',  duration: 0.65, easing: 'quadratic-out' }];
+    const cycle = idx % 4;
+    if (cycle === 0) return [{ type: 'slide', direction: 'up', distance: '6%', fade: true, duration: 0.5,  easing: 'quadratic-out' }];
+    if (cycle === 1) return [{ type: 'fade',  duration: 0.65, easing: 'quadratic-out' }];
+    if (cycle === 2) return [{ type: 'blur',  blur: 10, fade: true, duration: 0.55, easing: 'quadratic-out' }];
+    return                  [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.5,  easing: 'quadratic-out' }];
   };
 
-  // ── Ken Burns patterns (alternate per scene so consecutive scenes differ) ─────
+  // ── Ken Burns (8 patterns for strong visual variety) ─────────────────────────
   const resolveKenBurns = (idx: number): any[] => {
     const patterns = [
-      [{ type: 'scale', fade: false, start_scale: '100%', end_scale: '112%', easing: 'linear' }], // slow zoom in
-      [{ type: 'scale', fade: false, start_scale: '112%', end_scale: '100%', easing: 'linear' }], // slow zoom out
-      [{ type: 'scale', fade: false, start_scale: '104%', end_scale: '114%', easing: 'linear' }], // zoom in from mid
-      [{ type: 'scale', fade: false, start_scale: '110%', end_scale: '102%', easing: 'linear' }], // zoom out to mid
+      [{ type: 'scale', fade: false, start_scale: '100%', end_scale: '114%', easing: 'linear' }], // gentle zoom-in
+      [{ type: 'scale', fade: false, start_scale: '114%', end_scale: '100%', easing: 'linear' }], // gentle zoom-out
+      [{ type: 'scale', fade: false, start_scale: '104%', end_scale: '116%', easing: 'linear' }], // mid zoom-in
+      [{ type: 'scale', fade: false, start_scale: '112%', end_scale: '102%', easing: 'linear' }], // mid zoom-out
+      [{ type: 'scale', fade: false, start_scale: '106%', end_scale: '118%', easing: 'linear' }], // punchy zoom-in
+      [{ type: 'scale', fade: false, start_scale: '116%', end_scale: '104%', easing: 'linear' }], // punchy zoom-out
+      [{ type: 'scale', fade: false, start_scale: '100%', end_scale: '108%', easing: 'linear' }], // subtle zoom-in
+      [{ type: 'scale', fade: false, start_scale: '108%', end_scale: '100%', easing: 'linear' }], // subtle zoom-out
     ];
     return patterns[idx % patterns.length];
   };
 
-  // ── Build cuts (new-format `cuts`, fallback to old `creatomatePlan.scenes`) ───
+  // ── Build cuts ────────────────────────────────────────────────────────────────
   let rawCuts: any[] = [];
   if (Array.isArray(payload?.cuts) && (payload.cuts as any[]).length > 0) {
     rawCuts = payload.cuts as any[];
@@ -293,172 +390,166 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
     }));
   }
 
-  // Final fallback: at least one placeholder cut
   if (rawCuts.length === 0) {
-    rawCuts = [{
-      duration:   5,
-      imageUrl:   '',
-      mainText:   String(payload?.telopMain || 'タイトル'),
-      subText:    String(payload?.telopSub  || ''),
-      transition: 'fade',
-      animation:  'slide',
-    }];
+    rawCuts = [{ duration: 5, imageUrl: '', mainText: String(payload?.telopMain || 'タイトル'), subText: String(payload?.telopSub || ''), transition: 'fade', animation: 'slide' }];
   }
 
-  // ── Layout constants (adjusted per orientation) ───────────────────────────────
-  const textX     = isWide ? '7%'  : '10%';
-  const textWidth = isWide ? '52%' : isVertical ? '82%' : '78%';
-  const barX      = isWide ? '7%'  : '10%';
-  const barW      = isVertical ? '1.1 vmin' : '0.75 vmin';
-  const barH      = isWide ? '22%' : '20%';
-  const barY      = isVertical ? '64%'   : isSquare ? '59%'  : '57%';
-  const titleY    = isVertical ? '66.5%' : isSquare ? '61%'  : '59.5%';
-  const subY      = isVertical ? '73.5%' : isSquare ? '69.5%': '68%';
-  const titleSize = isVertical ? '5.8 vmin' : isSquare ? '5.2 vmin' : '5.8 vmin';
-  const subSize   = isVertical ? '3.2 vmin' : isSquare ? '3.5 vmin' : '3.6 vmin';
-  const textIndent = isVertical ? '14%' : isWide ? '10%' : '13%';
+  const totalCuts = Math.min(rawCuts.length, 7);
 
   // ── Build scene compositions ──────────────────────────────────────────────────
   const sceneCompositions = rawCuts.slice(0, 7).map((cut: any, i: number) => {
-    const nn = String(i + 1).padStart(2, '0');
+    const nn        = String(i + 1).padStart(2, '0');
     const timeStart = rawCuts.slice(0, i).reduce((acc: number, c: any) => acc + Number(c.duration || 4), 0);
     const dur       = Number(cut.duration || cut.durationSec || 4);
     const imgUrl    = String(cut.imageUrl || '').trim();
     const hasImg    = imgUrl.startsWith('http');
+    const isLastCut = i === totalCuts - 1;
 
-    const transition = String(cut.transition || '');
-    const animation  = String(cut.animation  || '');
-    const { animations, exit_animations } = resolveSceneTransition(transition, i);
-    const titleAnim = resolveTitleAnim(animation, i);
-    const subAnim   = resolveSubAnim(animation, i);
+    // Layout: explicit on cut or cycling sequence
+    const layout: LayoutType = (['bottom', 'top', 'center'] as string[]).includes(cut.layout || '')
+      ? (cut.layout as LayoutType)
+      : LAYOUT_SEQ[i % LAYOUT_SEQ.length];
+    const lp = getLayoutProps(layout);
+
+    const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i);
+    const titleAnim = resolveTitleAnim(String(cut.animation || ''), i, layout);
+    const subAnim   = resolveSubAnim(String(cut.animation || ''), i);
     const kbAnim    = resolveKenBurns(i);
 
-    // Background: image (with Ken Burns) or brand-colored shape
+    // Background
     const bgElement = hasImg ? {
-      name:      `bg_${nn}`,
-      type:      'image',
-      track:     1,
-      time:      0,
-      source:    imgUrl,
-      dynamic:   true,
-      width:     '100%',
-      height:    '100%',
-      x:         '50%',
-      y:         '50%',
-      x_anchor:  '50%',
-      y_anchor:  '50%',
-      fill_mode: 'cover',
-      animations: kbAnim,
+      name: `bg_${nn}`, type: 'image', track: 1, time: 0, source: imgUrl, dynamic: true,
+      width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
+      fill_mode: 'cover', animations: kbAnim,
     } : {
-      name:       `bg_${nn}`,
-      type:       'shape',
-      track:      1,
-      time:       0,
-      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-      fill_color: colorPrimary,
-      width:      '100%',
-      height:     '100%',
-      dynamic:    true,
+      name: `bg_${nn}`, type: 'shape', track: 1, time: 0,
+      path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_color: colorPrimary, width: '100%', height: '100%', dynamic: true,
     };
 
-    // Light overall scrim (keeps details visible)
-    const overlayLight = {
-      type:       'shape',
-      track:      2,
-      time:       0,
-      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-      fill_color: hasImg ? 'rgba(0,0,0,0.20)' : 'rgba(0,0,0,0.12)',
-      width:      '100%',
-      height:     '100%',
-      x:          '50%',
-      y:          '50%',
-      x_anchor:   '50%',
-      y_anchor:   '50%',
-    };
+    const elements: any[] = [bgElement];
 
-    // Dark lower-third overlay for text legibility (bottom ~46%)
-    const overlayBottom = {
-      type:       'shape',
-      track:      3,
-      time:       0,
-      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-      fill_color: hasImg ? 'rgba(0,0,0,0.60)' : 'rgba(0,0,0,0.50)',
-      width:      '100%',
-      height:     isVertical ? '45%' : '48%',
-      x:          '50%',
-      y:          '100%',
-      x_anchor:   '50%',
-      y_anchor:   '100%',
-      animations: [{ type: 'fade', duration: 0.45, easing: 'quadratic-out' }],
-    };
+    // Overlay layers
+    if (layout === 'center') {
+      // Single deep overlay for center layout
+      elements.push({
+        type: 'shape', track: 2, time: 0,
+        path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+        fill_color: hasImg ? 'rgba(0,0,0,0.65)' : 'rgba(0,0,0,0.45)',
+        width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
+        animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+      });
+    } else {
+      // Light full scrim
+      elements.push({
+        type: 'shape', track: 2, time: 0,
+        path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+        fill_color: hasImg ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.10)',
+        width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
+      });
+      // Major dark overlay (gradient sim – upper half)
+      elements.push({
+        type: 'shape', track: 3, time: 0,
+        path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+        fill_color: hasImg ? 'rgba(0,0,0,0.54)' : 'rgba(0,0,0,0.46)',
+        width: '100%', height: lp.overlayMajorH,
+        x: '50%', y: lp.overlayMajorY, x_anchor: '50%', y_anchor: lp.overlayMajorAnchorY,
+        animations: [{ type: 'fade', duration: 0.45, easing: 'quadratic-out' }],
+      });
+      // Minor extra-dark overlay (gradient sim – inner portion, denser)
+      if (lp.overlayMinorH) {
+        elements.push({
+          type: 'shape', track: 4, time: 0,
+          path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+          fill_color: hasImg ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.20)',
+          width: '100%', height: lp.overlayMinorH,
+          x: '50%', y: lp.overlayMinorY, x_anchor: '50%', y_anchor: lp.overlayMinorAnchorY,
+        });
+      }
+    }
 
-    // Accent colour bar – fades + slides up slightly with the text block
-    const accentBar = {
-      type:       'shape',
-      track:      4,
-      time:       0.08,
-      path:       'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-      fill_color: colorAccent,
-      width:      barW,
-      height:     barH,
-      x:          barX,
-      y:          barY,
-      x_anchor:   '0%',
-      y_anchor:   '0%',
-      animations: [{ type: 'slide', direction: 'up', distance: '6%', fade: true, duration: 0.45, easing: 'quadratic-out' }],
-    };
+    // Accent element
+    if (layout === 'center') {
+      // Horizontal accent underline (wipe-in for cinematic feel)
+      elements.push({
+        type: 'shape', track: 5, time: 0.38,
+        path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+        fill_color: colorAccent,
+        width: isVertical ? '18%' : '14%', height: isVertical ? '0.45 vmin' : '0.4 vmin',
+        x: '50%', y: isVertical ? '51.5%' : '50%', x_anchor: '50%', y_anchor: '0%',
+        animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }],
+      });
+    } else if (lp.barX) {
+      // Vertical accent bar
+      elements.push({
+        type: 'shape', track: 5, time: 0.06,
+        path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+        fill_color: colorAccent,
+        width: lp.barW, height: lp.barH, x: lp.barX, y: lp.barY, x_anchor: '0%', y_anchor: lp.barAnchorY,
+        animations: [{ type: 'slide', direction: lp.barDir, distance: '6%', fade: true, duration: 0.45, easing: 'quadratic-out' }],
+      });
+    }
 
-    // Main title
-    const titleEl = {
-      name:        `title_${nn}`,
-      type:        'text',
-      track:       5,
-      time:        0.2,
-      text:        String(cut.mainText || cut.title || cut.textMain || ''),
-      dynamic:     true,
-      x:           textIndent,
-      y:           titleY,
-      x_anchor:    '0%',
-      y_anchor:    '100%',
-      width:       textWidth,
+    // Scene number badge
+    elements.push({
+      type: 'text', track: 6, time: 0.08, text: nn,
+      x: isWide ? '92%' : isVertical ? '88%' : '87%', y: '4%',
+      x_anchor: '50%', y_anchor: '50%',
       font_family: 'Noto Sans JP',
-      font_size:   titleSize,
-      font_weight: '700',
-      fill_color:  '#ffffff',
-      line_height: 1.2,
-      text_clip:   true,
-      animations:  titleAnim,
-    };
+      font_size: isVertical ? '2.8 vmin' : '2.4 vmin',
+      font_weight: '700', fill_color: '#ffffff', text_align: 'center',
+      background_color: colorAccent, background_x_padding: 14, background_y_padding: 6,
+      animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-out' }],
+    });
 
-    // Subtitle
-    const subEl = {
-      name:        `sub_${nn}`,
-      type:        'text',
-      track:       6,
-      time:        0.38,
-      text:        String(cut.subText || cut.subtitle || cut.textSub || ''),
-      dynamic:     true,
-      x:           textIndent,
-      y:           subY,
-      x_anchor:    '0%',
-      y_anchor:    '0%',
-      width:       textWidth,
-      font_family: 'Noto Sans JP',
-      font_size:   subSize,
-      fill_color:  'rgba(255,255,255,0.88)',
-      line_height: 1.3,
-      text_clip:   true,
-      animations:  subAnim,
+    // Title text
+    const titleEl: Record<string, any> = {
+      name: `title_${nn}`, type: 'text', track: 7, time: 0.18,
+      text: String(cut.mainText || cut.title || cut.textMain || ''), dynamic: true,
+      x: lp.textIndent, y: lp.titleY,
+      x_anchor: lp.centerX ? '50%' : '0%', y_anchor: lp.titleAnchorY,
+      width: lp.textWidth, font_family: 'Noto Sans JP',
+      font_size: lp.titleSize, font_weight: layout === 'center' ? '900' : '700',
+      fill_color: '#ffffff', line_height: layout === 'center' ? 1.25 : 1.2,
+      text_clip: true, letter_spacing: 1.5, animations: titleAnim,
     };
+    if (lp.centerX) titleEl.text_align = 'center';
+    if (hasImg) { titleEl.shadow_color = 'rgba(0,0,0,0.4)'; titleEl.shadow_blur = 3; titleEl.shadow_x = 0; titleEl.shadow_y = 2; }
+    elements.push(titleEl);
+
+    // Subtitle text
+    const subText = String(cut.subText || cut.subtitle || cut.textSub || '');
+    if (subText) {
+      const subEl: Record<string, any> = {
+        name: `sub_${nn}`, type: 'text', track: 8, time: 0.36,
+        text: subText, dynamic: true,
+        x: lp.textIndent, y: lp.subY,
+        x_anchor: lp.centerX ? '50%' : '0%', y_anchor: lp.subAnchorY,
+        width: lp.textWidth, font_family: 'Noto Sans JP',
+        font_size: lp.subSize, fill_color: 'rgba(255,255,255,0.88)',
+        line_height: 1.3, text_clip: true, letter_spacing: 1, animations: subAnim,
+      };
+      if (lp.centerX) subEl.text_align = 'center';
+      elements.push(subEl);
+    }
+
+    // CTA accent line on last cut (wipes in from left for impact)
+    if (isLastCut) {
+      elements.push({
+        type: 'shape', track: 9, time: 0.52,
+        path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+        fill_color: colorAccent,
+        width: isVertical ? '72%' : '55%', height: isVertical ? '0.55 vmin' : '0.45 vmin',
+        x: lp.centerX ? '50%' : lp.textIndent,
+        y: isVertical ? '82%' : '78%',
+        x_anchor: lp.centerX ? '50%' : '0%', y_anchor: '0%',
+        animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }],
+      });
+    }
 
     return {
-      type:            'composition',
-      track:           i + 1,
-      time:            timeStart,
-      duration:        dur,
-      elements:        [bgElement, overlayLight, overlayBottom, accentBar, titleEl, subEl],
-      animations,
-      exit_animations,
+      type: 'composition', track: i + 1, time: timeStart, duration: dur,
+      elements, animations, exit_animations,
     };
   });
 

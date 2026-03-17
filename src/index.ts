@@ -1087,7 +1087,16 @@ app.get('/api/pal-video/jobs/:id', async (req: Request, res: Response) => {
 
 app.post('/api/pal-video/jobs', async (req: Request, res: Response) => {
   try {
-    const job = await upsertPalVideoJob(req.body || {});
+    const b = req.body || {};
+    // Accept both camelCase (internal) and snake_case (HTTP API) keys
+    const normalized = {
+      ...b,
+      paletteId: b.paletteId ?? b.palette_id,
+      planCode:  b.planCode  ?? b.plan_code,
+      previewUrl: b.previewUrl ?? b.preview_url,
+      youtubeUrl: b.youtubeUrl ?? b.youtube_url,
+    };
+    const job = await upsertPalVideoJob(normalized);
     return res.json({ success: true, job });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'failed to save pal_video job';

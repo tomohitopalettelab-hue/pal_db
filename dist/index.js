@@ -490,9 +490,9 @@ const buildCreatomateInlineSource = (payload) => {
             path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
             fill_mode: 'linear',
             fill_color: [
-                { position: 0, color: colorPrimary },
-                { position: 0.6, color: colorPrimary },
-                { position: 1, color: colorAccent },
+                { offset: 0, color: colorPrimary },
+                { offset: 0.6, color: colorPrimary },
+                { offset: 1, color: colorAccent },
             ],
             fill_x0: i % 2 === 0 ? '0%' : '100%', fill_y0: '0%',
             fill_x1: i % 2 === 0 ? '100%' : '0%', fill_y1: '100%',
@@ -510,8 +510,8 @@ const buildCreatomateInlineSource = (payload) => {
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_mode: 'linear',
                 fill_color: hasImg
-                    ? [{ position: 0, color: 'rgba(0,0,0,0.30)' }, { position: 1, color: 'rgba(0,0,0,0.78)' }]
-                    : [{ position: 0, color: 'rgba(0,0,0,0.20)' }, { position: 1, color: 'rgba(0,0,0,0.55)' }],
+                    ? [{ offset: 0, color: 'rgba(0,0,0,0.30)' }, { offset: 1, color: 'rgba(0,0,0,0.78)' }]
+                    : [{ offset: 0, color: 'rgba(0,0,0,0.20)' }, { offset: 1, color: 'rgba(0,0,0,0.55)' }],
                 fill_x0: '50%', fill_y0: '0%', fill_x1: '50%', fill_y1: '100%',
                 width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
                 animations: [{ type: 'fade', duration: 0.6, easing: 'quadratic-out' }],
@@ -533,9 +533,9 @@ const buildCreatomateInlineSource = (payload) => {
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_mode: 'linear',
                 fill_color: [
-                    { position: 0, color: 'rgba(0,0,0,0)' },
-                    { position: 0.3, color: 'rgba(10,10,10,0.88)' },
-                    { position: 1, color: 'rgba(10,10,10,0.96)' },
+                    { offset: 0, color: 'rgba(0,0,0,0)' },
+                    { offset: 0.3, color: 'rgba(10,10,10,0.88)' },
+                    { offset: 1, color: 'rgba(10,10,10,0.96)' },
                 ],
                 fill_x0: '50%', fill_y0: '0%', fill_x1: '50%', fill_y1: '100%',
                 width: '100%', height: lp.captionBandH,
@@ -570,8 +570,8 @@ const buildCreatomateInlineSource = (payload) => {
                     path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                     fill_mode: 'linear',
                     fill_color: hasImg
-                        ? [{ position: 0, color: 'rgba(0,0,0,0)' }, { position: 0.5, color: 'rgba(0,0,0,0.45)' }, { position: 1, color: 'rgba(0,0,0,0.82)' }]
-                        : [{ position: 0, color: 'rgba(0,0,0,0)' }, { position: 1, color: 'rgba(0,0,0,0.60)' }],
+                        ? [{ offset: 0, color: 'rgba(0,0,0,0)' }, { offset: 0.5, color: 'rgba(0,0,0,0.45)' }, { offset: 1, color: 'rgba(0,0,0,0.82)' }]
+                        : [{ offset: 0, color: 'rgba(0,0,0,0)' }, { offset: 1, color: 'rgba(0,0,0,0.60)' }],
                     fill_x0: '50%', fill_y0: gradY0, fill_x1: '50%', fill_y1: gradY1,
                     width: '100%', height: lp.overlayMajorH,
                     x: '50%', y: lp.overlayMajorY, x_anchor: '50%', y_anchor: lp.overlayMajorAnchorY,
@@ -585,8 +585,8 @@ const buildCreatomateInlineSource = (payload) => {
                     path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                     fill_mode: 'linear',
                     fill_color: [
-                        { position: 0, color: 'rgba(0,0,0,0)' },
-                        { position: 1, color: 'rgba(0,0,0,0.38)' },
+                        { offset: 0, color: 'rgba(0,0,0,0)' },
+                        { offset: 1, color: 'rgba(0,0,0,0.38)' },
                     ],
                     fill_x0: '50%', fill_y0: gradY0, fill_x1: '50%', fill_y1: gradY1,
                     width: '100%', height: lp.overlayMinorH,
@@ -647,8 +647,8 @@ const buildCreatomateInlineSource = (payload) => {
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_mode: 'linear',
                 fill_color: [
-                    { position: 0, color: colorPrimary },
-                    { position: 1, color: colorAccent },
+                    { offset: 0, color: colorPrimary },
+                    { offset: 1, color: colorAccent },
                 ],
                 fill_x0: '0%', fill_y0: '50%', fill_x1: '100%', fill_y1: '50%',
                 width: '100%', height: '0.8 vmin',
@@ -715,8 +715,8 @@ const buildCreatomateInlineSource = (payload) => {
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_mode: 'linear',
                 fill_color: [
-                    { position: 0, color: colorAccent },
-                    { position: 1, color: colorPrimary },
+                    { offset: 0, color: colorAccent },
+                    { offset: 1, color: colorPrimary },
                 ],
                 fill_x0: '0%', fill_y0: '50%', fill_x1: '100%', fill_y1: '50%',
                 width: isVertical ? '70%' : '55%', height: '0.5 vmin',

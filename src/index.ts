@@ -961,6 +961,17 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
   const textColor    = String(payload?.textColor    || '#ffffff');
   const bgmRaw = String(payload?.bgm || '');
   const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+  const purpose = String(payload?.purpose || '');
+
+  // ── CTA text based on purpose ─────────────────────────────────────────────────
+  const CTA_BY_PURPOSE: Record<string, string> = {
+    promotion:   'キャンペーン詳細はプロフィールから  →',
+    sns_post:    'フォロー＆チェック  →',
+    sns_ad:      '今すぐ詳細を確認  →',
+    review:      'あなたも体験してみて  →',
+    achievement: '実績の詳細はこちら  →',
+  };
+  const ctaText = CTA_BY_PURPOSE[purpose] || 'プロフィールをチェック  →';
 
   // ── 5 Layout types (cycling per scene) ───────────────────────────────────────
   // bottom:    lower-third gradient overlay (Instagram/TikTok classic)
@@ -1366,7 +1377,7 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
       // CTA pill
       elements.push({
         type: 'text', track: 10, time: 0.65,
-        text: 'プロフィールをチェック  →',
+        text: ctaText,
         x: '50%', y: isVertical ? '84%' : '80%',
         x_anchor: '50%', y_anchor: '0%',
         width: isVertical ? '72%' : '56%',

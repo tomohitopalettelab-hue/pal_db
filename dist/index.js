@@ -171,6 +171,183 @@ const BGM_URL_MAP = {
     cinematic: 'https://cdn.pixabay.com/audio/2022/01/20/audio_d0bd90a6d6.mp3',
     natural_warm: 'https://cdn.pixabay.com/audio/2021/11/13/audio_7b6e8dd7bf.mp3',
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// Collage template builder (白背景 / ポラロイドグリッド / Canvaスタイル)
+// ─────────────────────────────────────────────────────────────────────────────
+const buildCollageInlineSource = (payload) => {
+    const destination = String(payload?.destination || payload?.purpose || 'instagram_story');
+    const dims = (DESTINATION_DIMENSIONS[destination] || [1080, 1920]);
+    const [w, h] = dims;
+    const isVertical = h > w;
+    const isWide = w > h;
+    const bgColor = String(payload?.bgColor || '#FAF8F5');
+    const textColor = String(payload?.textColor || '#1C1C1C');
+    const accentColor = String(payload?.colorAccent || payload?.accentColor || '#9C7B5C');
+    const bgmRaw = String(payload?.bgm || '');
+    const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+    const rawCuts = Array.isArray(payload?.cuts) && payload.cuts.length > 0
+        ? payload.cuts
+        : [{
+                mainText: String(payload?.mainText || payload?.telopMain || ''),
+                subText: String(payload?.subText || payload?.telopSub || ''),
+                caption: String(payload?.caption || ''),
+                images: Array.isArray(payload?.images) ? payload.images : [payload?.imageUrl].filter(Boolean),
+                duration: Number(payload?.duration || 9),
+            }];
+    // ── Card & image dimensions ────────────────────────────────────────────────
+    const cardW = isVertical ? '44%' : '38%';
+    const cardH = isVertical ? '29%' : '42%';
+    const imgW = isVertical ? '42%' : '36%';
+    const imgH = isVertical ? '27%' : '39%';
+    // ── 2×2 grid positions (center of each card) ─────────────────────────────
+    const GRID_POSITIONS = isVertical ? [
+        { x: '25%', y: '14.5%' }, { x: '75%', y: '14.5%' },
+        { x: '25%', y: '75.5%' }, { x: '75%', y: '75.5%' },
+    ] : [
+        { x: '22%', y: '25%' }, { x: '66%', y: '25%' },
+        { x: '22%', y: '75%' }, { x: '66%', y: '75%' },
+    ];
+    const scenes = rawCuts.map((cut, i) => {
+        const dur = Number(cut.duration || cut.durationSec || 9);
+        const mainText = String(cut.mainText || '');
+        const subText = String(cut.subText || '');
+        const caption = String(cut.caption || '');
+        const rawImgs = Array.isArray(cut.images) ? cut.images : cut.imageUrl ? [cut.imageUrl] : [];
+        const imgs = rawImgs.map((u) => String(u || '')).filter((u) => u.startsWith('http'));
+        const elements = [];
+        // ── Background (cream/white) ────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 1, time: 0,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: bgColor,
+            width: '100%', height: '100%',
+            x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
+        });
+        // ── 2×2 Polaroid Photo Grid ───────────────────────────────────────────────
+        // Top row (pi=0,1) slides down from above; bottom row (pi=2,3) slides up from below
+        // Top row appears at t=0, bottom row at t=0.18 (stagger)
+        GRID_POSITIONS.forEach((pos, pi) => {
+            const isBottomRow = pi >= 2;
+            const delay = isBottomRow ? 0.18 : 0;
+            const imgUrl = imgs[pi] || '';
+            const hasPic = imgUrl.length > 0;
+            const slideDir = isBottomRow ? 'up' : 'down';
+            // White polaroid card frame
+            elements.push({
+                type: 'shape', track: 2 + pi, time: delay,
+                path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                fill_color: '#FFFFFF',
+                width: cardW, height: cardH,
+                x: pos.x, y: pos.y, x_anchor: '50%', y_anchor: '50%',
+                border_radius: 12,
+                shadow_color: 'rgba(0,0,0,0.10)',
+                shadow_blur: 20, shadow_x: 0, shadow_y: 6,
+                animations: [{ type: 'slide', direction: slideDir, distance: isVertical ? '2%' : '3%', fade: true, duration: 0.5, easing: 'quadratic-out' }],
+            });
+            // Photo image (or warm-gray placeholder)
+            elements.push({
+                ...(hasPic
+                    ? { type: 'image', source: imgUrl, dynamic: true, fill_mode: 'cover' }
+                    : { type: 'shape', path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z', fill_color: '#E0D5CB' }),
+                track: 6 + pi, time: delay,
+                width: imgW, height: imgH,
+                x: pos.x, y: pos.y, x_anchor: '50%', y_anchor: '50%',
+                border_radius: 8,
+                animations: [{ type: 'slide', direction: slideDir, distance: isVertical ? '2%' : '3%', fade: true, duration: 0.5, easing: 'quadratic-out' }],
+            });
+        });
+        // ── Center Text Band ─────────────────────────────────────────────────────
+        // Thin separator lines above/below text zone
+        if (isVertical) {
+            elements.push({
+                type: 'shape', track: 11, time: 0.25,
+                path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                fill_color: 'rgba(0,0,0,0.12)', width: '72%', height: '0.2 vmin',
+                x: '50%', y: '43.8%', x_anchor: '50%', y_anchor: '50%',
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+            });
+            elements.push({
+                type: 'shape', track: 12, time: 0.28,
+                path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                fill_color: 'rgba(0,0,0,0.12)', width: '72%', height: '0.2 vmin',
+                x: '50%', y: '56.2%', x_anchor: '50%', y_anchor: '50%',
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+            });
+        }
+        // subText — small label (thin weight, wide letter-spacing)
+        if (subText) {
+            elements.push({
+                type: 'text', track: 13, time: 0.30,
+                text: subText, dynamic: true,
+                x: '50%', y: isVertical ? '46.8%' : '46.8%',
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '76%' : '68%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '3.2 vmin' : '2.8 vmin',
+                font_weight: '300',
+                fill_color: textColor,
+                letter_spacing: 3,
+                text_align: 'center',
+                animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-out' }],
+            });
+        }
+        // mainText — big bold title (word-by-word slide-up)
+        if (mainText) {
+            elements.push({
+                type: 'text', track: 14, time: 0.40,
+                text: mainText, dynamic: true,
+                x: '50%', y: isVertical ? '52%' : '52%',
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '82%' : '75%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '8.5 vmin' : '7 vmin',
+                font_weight: '700',
+                fill_color: textColor,
+                letter_spacing: isVertical ? 6 : 4,
+                text_align: 'center',
+                animations: [{ type: 'text-slide', direction: 'up', duration: 0.6, easing: 'back-out' }],
+            });
+        }
+        // caption — small bottom text
+        if (caption) {
+            elements.push({
+                type: 'text', track: 15, time: 0.55,
+                text: caption, dynamic: true,
+                x: '50%', y: isWide ? '88%' : '88.5%',
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '70%' : '60%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '2.8 vmin' : '2.4 vmin',
+                font_weight: '300',
+                fill_color: 'rgba(28,28,28,0.60)',
+                letter_spacing: 1,
+                text_align: 'center',
+                animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+            });
+            // Thin accent line below caption
+            elements.push({
+                type: 'shape', track: 16, time: 0.65,
+                path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                fill_color: accentColor,
+                width: '14%', height: '0.3 vmin',
+                x: '50%', y: '91%', x_anchor: '50%', y_anchor: '50%',
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }],
+            });
+        }
+        const timeStart = rawCuts.slice(0, i).reduce((acc, c) => acc + Number(c.duration || 9), 0);
+        return {
+            type: 'composition', track: i + 1, time: timeStart, duration: dur,
+            animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
+            elements,
+        };
+    });
+    const rootElements = [...scenes];
+    if (bgmUrl) {
+        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+    }
+    return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
+};
 const buildCreatomateInlineSource = (payload) => {
     const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
     const [w, h] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
@@ -770,7 +947,9 @@ const buildCreatomateInlineSource = (payload) => {
 };
 const renderCreatomateJob = async (_req, job) => {
     const payload = (job.payload || {});
-    const source = buildCreatomateInlineSource(payload);
+    const source = String(payload?.style || '') === 'collage'
+        ? buildCollageInlineSource(payload)
+        : buildCreatomateInlineSource(payload);
     const bodyJson = JSON.stringify({ source });
     console.log('[pal-db] creatomate render request', {
         jobId: job.id,
@@ -1168,7 +1347,9 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
         if (!job)
             return res.status(404).json({ success: false, error: 'job not found' });
         const payload = (job.payload || {});
-        const source = buildCreatomateInlineSource(payload);
+        const source = String(payload?.style || '') === 'collage'
+            ? buildCollageInlineSource(payload)
+            : buildCreatomateInlineSource(payload);
         const bodyJson = JSON.stringify({ source });
         // Creatomateへの実際送信テスト
         let creatomateStatus = null;

@@ -705,7 +705,9 @@ const buildMagazineInlineSource = (payload: Record<string, unknown>) => {
     });
 
     // ── Bright accent edge line ──────────────────────────────────────────────
-    const lineX = isLeft ? panelW : `calc(100% - ${panelW})`;
+    // panelW is '50%' (vertical) or '44%' (wide). Compute the right-side x numerically.
+    const panelWNum = isVertical ? 50 : 44;
+    const lineX = isLeft ? `${panelWNum}%` : `${100 - panelWNum}%`;
     elements.push({
       type: 'shape', track: 4, time: 0.18,
       path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
@@ -834,25 +836,31 @@ const buildMinimalInlineSource = (payload: Record<string, unknown>) => {
 
     // ── Central image (subtle rounded card) ─────────────────────────────────
     if (hasImg) {
-      const imgH = isVertical ? '45%' : '55%';
-      const imgW = isVertical ? '82%' : '70%';
+      // Card dimensions (slightly larger than image for white shadow frame effect)
+      const imgWNum  = isVertical ? 82 : 70;
+      const imgHNum  = isVertical ? 45 : 55;
+      const cardWStr = `${imgWNum + 3}%`;
+      const cardHStr = `${imgHNum + 2}%`;
+      const imgWStr  = `${imgWNum}%`;
+      const imgHStr  = `${imgHNum}%`;
+      const imgY     = isVertical ? '38%' : '45%';
       // White card shadow behind image
       elements.push({
         type: 'shape', track: 2, time: 0,
         path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
         fill_color: '#FFFFFF',
-        width: `calc(${imgW} + 2%)`, height: `calc(${imgH} + 1.5%)`,
-        x: '50%', y: isVertical ? '38%' : '45%', x_anchor: '50%', y_anchor: '50%',
+        width: cardWStr, height: cardHStr,
+        x: '50%', y: imgY, x_anchor: '50%', y_anchor: '50%',
         border_radius: 8,
         shadow_color: 'rgba(0,0,0,0.08)', shadow_blur: 24, shadow_x: 0, shadow_y: 8,
         animations: [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
       });
       elements.push({
         type: 'image', track: 3, time: 0, source: imgUrl, dynamic: true,
-        width: imgW, height: imgH,
-        x: '50%', y: isVertical ? '38%' : '45%', x_anchor: '50%', y_anchor: '50%',
+        width: imgWStr, height: imgHStr,
+        x: '50%', y: imgY, x_anchor: '50%', y_anchor: '50%',
         fill_mode: 'cover', border_radius: 6,
-        animations: [{ type: 'scale', start_scale: '102%', end_scale: '100%', fade: true, duration: 1.2, easing: 'quadratic-out' }],
+        animations: [{ type: 'scale', start_scale: '104%', end_scale: '100%', fade: true, duration: 1.4, easing: 'quadratic-out' }],
       });
     }
 

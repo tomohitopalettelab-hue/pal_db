@@ -1107,6 +1107,22 @@ app.post('/api/pal-video/jobs', async (req: Request, res: Response) => {
   }
 });
 
+// デバッグ用: Creatomateに送るsource JSONを返す（実際には送らない）
+app.post('/api/pal-video/debug-source', async (req: Request, res: Response) => {
+  try {
+    const jobId = String(req.body?.jobId || '').trim();
+    if (!jobId) return res.status(400).json({ success: false, error: 'jobId is required' });
+    const job = await getPalVideoJob(jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'job not found' });
+    const payload = (job.payload || {}) as Record<string, unknown>;
+    const source = buildCreatomateInlineSource(payload);
+    return res.json({ success: true, source, payloadCutsCount: (payload.cuts as any[] | undefined)?.length ?? 0 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'failed';
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
 app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
   try {
     if (!CREATOMATE_API_KEY) {

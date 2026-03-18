@@ -409,19 +409,33 @@ const buildCreatomateInlineSource = (payload) => {
             return [{ type: 'blur', blur: 10, fade: true, duration: 0.55, easing: 'quadratic-out' }];
         return [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.5, easing: 'quadratic-out' }];
     };
-    // ── Ken Burns (8 patterns — alternating zoom in/out each cut) ─────────────────
-    const resolveKenBurns = (idx) => {
-        const patterns = [
-            [{ type: 'scale', fade: false, start_scale: '100%', end_scale: '114%', easing: 'linear' }],
-            [{ type: 'scale', fade: false, start_scale: '114%', end_scale: '100%', easing: 'linear' }],
-            [{ type: 'scale', fade: false, start_scale: '104%', end_scale: '116%', easing: 'linear' }],
-            [{ type: 'scale', fade: false, start_scale: '112%', end_scale: '102%', easing: 'linear' }],
-            [{ type: 'scale', fade: false, start_scale: '106%', end_scale: '118%', easing: 'linear' }],
-            [{ type: 'scale', fade: false, start_scale: '116%', end_scale: '104%', easing: 'linear' }],
-            [{ type: 'scale', fade: false, start_scale: '100%', end_scale: '110%', easing: 'linear' }],
-            [{ type: 'scale', fade: false, start_scale: '110%', end_scale: '100%', easing: 'linear' }],
+    // ── Ken Burns: pan + zoom via keyframes (Canva-grade cinematic motion) ──────
+    const resolveKenBurns = (idx, dur) => {
+        // zoom: alternating in/out
+        const scales = [
+            ['100%', '115%'], ['116%', '102%'], ['100%', '114%'], ['113%', '100%'],
+            ['102%', '116%'], ['115%', '100%'], ['100%', '113%'], ['112%', '100%'],
         ];
-        return patterns[idx % patterns.length];
+        const [s0, s1] = scales[idx % scales.length];
+        // pan: subtle drift in 8 directions
+        const pans = [
+            { x0: '50%', y0: '50%', x1: '52.5%', y1: '48.5%' },
+            { x0: '52%', y0: '52%', x1: '49.5%', y1: '50%' },
+            { x0: '49%', y0: '51%', x1: '51.5%', y1: '49%' },
+            { x0: '52%', y0: '49%', x1: '50%', y1: '51.5%' },
+            { x0: '50%', y0: '52%', x1: '52%', y1: '50%' },
+            { x0: '51%', y0: '50%', x1: '49%', y1: '52%' },
+            { x0: '49%', y0: '49%', x1: '51%', y1: '51%' },
+            { x0: '52%', y0: '51%', x1: '50%', y1: '49%' },
+        ];
+        const p = pans[idx % pans.length];
+        const t = `${dur} s`;
+        return {
+            x: [{ time: '0 s', value: p.x0 }, { time: t, value: p.x1, easing: 'quintic-in-out' }],
+            y: [{ time: '0 s', value: p.y0 }, { time: t, value: p.y1, easing: 'quintic-in-out' }],
+            x_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
+            y_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
+        };
     };
     // ── Build cuts ────────────────────────────────────────────────────────────────
     let rawCuts = [];
@@ -462,212 +476,269 @@ const buildCreatomateInlineSource = (payload) => {
         const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i);
         const titleAnim = resolveTitleAnim(String(cut.animation || ''), i, layout);
         const subAnim = resolveSubAnim(String(cut.animation || ''), i);
-        const kbAnim = resolveKenBurns(i);
+        const kbProps = resolveKenBurns(i, dur);
         // ── Background ─────────────────────────────────────────────────────────────
         const bgElement = hasImg ? {
             name: `bg_${nn}`, type: 'image', track: 1, time: 0, source: imgUrl, dynamic: true,
-            width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
-            fill_mode: 'cover', animations: kbAnim,
+            width: '100%', height: '100%',
+            x_anchor: '50%', y_anchor: '50%',
+            fill_mode: 'cover',
+            ...kbProps, // Ken Burns: x/y pan + x_scale/y_scale zoom keyframes
         } : {
+            // No image: beautiful brand gradient background
             name: `bg_${nn}`, type: 'shape', track: 1, time: 0,
             path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-            fill_color: colorPrimary, width: '100%', height: '100%', dynamic: true,
+            fill_mode: 'linear',
+            fill_color: [
+                { position: 0, color: colorPrimary },
+                { position: 0.6, color: colorPrimary },
+                { position: 1, color: colorAccent },
+            ],
+            fill_x0: i % 2 === 0 ? '0%' : '100%', fill_y0: '0%',
+            fill_x1: i % 2 === 0 ? '100%' : '0%', fill_y1: '100%',
+            width: '100%', height: '100%', dynamic: true,
         };
         const elements = [bgElement];
-        // ── Overlay layers ──────────────────────────────────────────────────────────
+        // ── Overlay layers (Canva-grade gradient treatments) ─────────────────────
+        // isBottom = text at bottom, isTop = text at top
+        const isBottom = layout === 'bottom';
+        const isTop = layout === 'top';
         if (layout === 'center') {
-            // Deep cinematic overlay
+            // Cinematic: full gradient overlay darker at bottom, brand-tinted
             elements.push({
                 type: 'shape', track: 2, time: 0,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                fill_color: hasImg ? 'rgba(0,0,0,0.68)' : 'rgba(0,0,0,0.50)',
+                fill_mode: 'linear',
+                fill_color: hasImg
+                    ? [{ position: 0, color: 'rgba(0,0,0,0.30)' }, { position: 1, color: 'rgba(0,0,0,0.78)' }]
+                    : [{ position: 0, color: 'rgba(0,0,0,0.20)' }, { position: 1, color: 'rgba(0,0,0,0.55)' }],
+                fill_x0: '50%', fill_y0: '0%', fill_x1: '50%', fill_y1: '100%',
                 width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
-                animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+                animations: [{ type: 'fade', duration: 0.6, easing: 'quadratic-out' }],
             });
         }
         else if (layout === 'caption') {
-            // Light scrim only — band is handled separately below
-            elements.push({
-                type: 'shape', track: 2, time: 0,
-                path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                fill_color: hasImg ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.08)',
-                width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
-            });
-            // Solid dark caption band — slides up from below
+            // Light scrim across full frame
+            if (hasImg) {
+                elements.push({
+                    type: 'shape', track: 2, time: 0,
+                    path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                    fill_color: 'rgba(0,0,0,0.10)',
+                    width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
+                });
+            }
+            // Caption band: gradient from transparent → brand dark
             elements.push({
                 type: 'shape', track: 3, time: 0,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                fill_color: 'rgba(10,10,10,0.90)',
+                fill_mode: 'linear',
+                fill_color: [
+                    { position: 0, color: 'rgba(0,0,0,0)' },
+                    { position: 0.3, color: 'rgba(10,10,10,0.88)' },
+                    { position: 1, color: 'rgba(10,10,10,0.96)' },
+                ],
+                fill_x0: '50%', fill_y0: '0%', fill_x1: '50%', fill_y1: '100%',
                 width: '100%', height: lp.captionBandH,
                 x: '50%', y: '100%', x_anchor: '50%', y_anchor: '100%',
-                animations: [{ type: 'slide', direction: 'up', distance: '5%', fade: true, duration: 0.4, easing: 'quadratic-out' }],
+                animations: [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.45, easing: 'quadratic-out' }],
             });
-            // Accent line at top edge of caption band
+            // Accent top-edge line
             elements.push({
-                type: 'shape', track: 4, time: 0.1,
+                type: 'shape', track: 4, time: 0.15,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_color: colorAccent,
-                width: '100%', height: '0.55 vmin',
+                width: '100%', height: '0.45 vmin',
                 x: '50%', y: lp.captionBandTopY, x_anchor: '50%', y_anchor: '100%',
-                animations: [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.6, easing: 'quadratic-out' }],
             });
         }
         else {
-            // Light full scrim (bottom / top / billboard)
+            // bottom / top / billboard — directional gradient overlay (Canva-style)
+            const gradY0 = isTop ? '100%' : '0%'; // gradient start (transparent side)
+            const gradY1 = isTop ? '0%' : '100%'; // gradient end (dark side)
+            // Full-frame vignette (subtle)
             elements.push({
                 type: 'shape', track: 2, time: 0,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                fill_color: hasImg ? 'rgba(0,0,0,0.16)' : 'rgba(0,0,0,0.08)',
+                fill_color: hasImg ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0)',
                 width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
             });
-            // Major directional gradient overlay
+            // Main directional gradient overlay
             if (lp.overlayMajorH) {
                 elements.push({
                     type: 'shape', track: 3, time: 0,
                     path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                    fill_color: hasImg ? 'rgba(0,0,0,0.58)' : 'rgba(0,0,0,0.50)',
+                    fill_mode: 'linear',
+                    fill_color: hasImg
+                        ? [{ position: 0, color: 'rgba(0,0,0,0)' }, { position: 0.5, color: 'rgba(0,0,0,0.45)' }, { position: 1, color: 'rgba(0,0,0,0.82)' }]
+                        : [{ position: 0, color: 'rgba(0,0,0,0)' }, { position: 1, color: 'rgba(0,0,0,0.60)' }],
+                    fill_x0: '50%', fill_y0: gradY0, fill_x1: '50%', fill_y1: gradY1,
                     width: '100%', height: lp.overlayMajorH,
                     x: '50%', y: lp.overlayMajorY, x_anchor: '50%', y_anchor: lp.overlayMajorAnchorY,
-                    animations: [{ type: 'fade', duration: 0.45, easing: 'quadratic-out' }],
+                    animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
                 });
             }
-            // Minor denser overlay (inner portion)
+            // Secondary overlay: extra depth near text
             if (lp.overlayMinorH) {
                 elements.push({
                     type: 'shape', track: 4, time: 0,
                     path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                    fill_color: hasImg ? 'rgba(0,0,0,0.30)' : 'rgba(0,0,0,0.22)',
+                    fill_mode: 'linear',
+                    fill_color: [
+                        { position: 0, color: 'rgba(0,0,0,0)' },
+                        { position: 1, color: 'rgba(0,0,0,0.38)' },
+                    ],
+                    fill_x0: '50%', fill_y0: gradY0, fill_x1: '50%', fill_y1: gradY1,
                     width: '100%', height: lp.overlayMinorH,
                     x: '50%', y: lp.overlayMinorY, x_anchor: '50%', y_anchor: lp.overlayMinorAnchorY,
                 });
             }
         }
-        // ── Accent elements ─────────────────────────────────────────────────────────
+        // ── Accent elements (Canva-style horizontal wipe lines) ─────────────────
         if (layout === 'center') {
-            // Horizontal accent underline (cinematic)
+            // Double-line cinematic accent (Canva hallmark)
             elements.push({
-                type: 'shape', track: 5, time: 0.38,
+                type: 'shape', track: 5, time: 0.35,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_color: colorAccent,
-                width: isVertical ? '20%' : '15%', height: '0.5 vmin',
-                x: '50%', y: isVertical ? '52%' : '51%', x_anchor: '50%', y_anchor: '0%',
-                animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }],
+                width: isVertical ? '22%' : '16%', height: '0.45 vmin',
+                x: '50%', y: isVertical ? '53%' : '52%', x_anchor: '50%', y_anchor: '0%',
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+            });
+            elements.push({
+                type: 'shape', track: 5, time: 0.42,
+                path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                fill_color: 'rgba(255,255,255,0.25)',
+                width: isVertical ? '14%' : '10%', height: '0.3 vmin',
+                x: '50%', y: isVertical ? '54.6%' : '53.5%', x_anchor: '50%', y_anchor: '0%',
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.45, easing: 'quadratic-out' }],
             });
         }
         else if (layout === 'billboard') {
-            // Horizontal accent line below giant title
+            // Bold underline sweep below headline
             elements.push({
-                type: 'shape', track: 5, time: 0.28,
+                type: 'shape', track: 5, time: 0.25,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_color: colorAccent,
-                width: isVertical ? '24%' : '18%', height: '0.55 vmin',
-                x: '50%', y: isVertical ? '20%' : '19%', x_anchor: '50%', y_anchor: '0%',
-                animations: [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+                width: isVertical ? '28%' : '20%', height: '0.6 vmin',
+                x: '50%', y: isVertical ? '21%' : '20%', x_anchor: '50%', y_anchor: '0%',
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.6, easing: 'quadratic-out' }],
             });
         }
-        else if (layout !== 'caption' && lp.barX) {
-            // Vertical accent bar (bottom / top)
+        else if (layout !== 'caption') {
+            // bottom / top: short accent line above title (Canva-style pre-text marker)
+            const accentY = isTop
+                ? (isVertical ? '9%' : '8%')
+                : (isVertical ? '62.5%' : '58%');
+            const accentAnchorY = isTop ? '0%' : '100%';
             elements.push({
-                type: 'shape', track: 5, time: 0.06,
+                type: 'shape', track: 5, time: 0.08,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_color: colorAccent,
-                width: lp.barW, height: lp.barH, x: lp.barX, y: lp.barY,
-                x_anchor: '0%', y_anchor: lp.barAnchorY,
-                animations: [{ type: 'slide', direction: lp.barDir, distance: '6%', fade: true, duration: 0.45, easing: 'quadratic-out' }],
+                width: isWide ? '8%' : isVertical ? '12%' : '10%', height: '0.5 vmin',
+                x: lp.textIndent, y: accentY, x_anchor: '0%', y_anchor: accentAnchorY,
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }],
             });
         }
-        // ── First-cut intro flash (branding moment) ──────────────────────────────
+        // ── Top brand bar (first cut only) ───────────────────────────────────────
         if (isFirstCut) {
             elements.push({
                 type: 'shape', track: 5, time: 0,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                fill_color: colorPrimary,
-                width: '100%', height: '0.7 vmin',
+                fill_mode: 'linear',
+                fill_color: [
+                    { position: 0, color: colorPrimary },
+                    { position: 1, color: colorAccent },
+                ],
+                fill_x0: '0%', fill_y0: '50%', fill_x1: '100%', fill_y1: '50%',
+                width: '100%', height: '0.8 vmin',
                 x: '50%', y: '0%', x_anchor: '50%', y_anchor: '0%',
-                animations: [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.8, easing: 'quadratic-out' }],
                 exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }],
             });
         }
-        // ── Scene number badge ────────────────────────────────────────────────────
+        // ── Scene number dot (minimal, Canva-style) ──────────────────────────────
         elements.push({
-            type: 'text', track: 6, time: 0.08, text: nn,
-            x: isWide ? '92%' : isVertical ? '88%' : '87%', y: '4%',
-            x_anchor: '50%', y_anchor: '50%',
+            type: 'text', track: 6, time: 0.1,
+            text: `${i + 1} / ${totalCuts}`,
+            x: isWide ? '93%' : '90%', y: '4.5%',
+            x_anchor: '100%', y_anchor: '50%',
             font_family: 'Noto Sans JP',
-            font_size: isVertical ? '2.8 vmin' : '2.4 vmin',
-            font_weight: '700', fill_color: '#ffffff', text_align: 'center',
-            background_color: colorAccent, background_x_padding: 14, background_y_padding: 6,
-            animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-out' }],
+            font_size: isVertical ? '2.2 vmin' : '1.9 vmin',
+            font_weight: '400', fill_color: 'rgba(255,255,255,0.70)',
+            letter_spacing: 1,
+            animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-out' }],
         });
-        // ── Title text ────────────────────────────────────────────────────────────
+        // ── Title text (Canva-grade typography) ──────────────────────────────────
         const mainTextStr = String(cut.mainText || cut.title || cut.textMain || '');
+        const isCinematic = (layout === 'center' || layout === 'billboard');
         const titleEl = {
-            name: `title_${nn}`, type: 'text', track: 7, time: 0.18,
+            name: `title_${nn}`, type: 'text', track: 7, time: 0.22,
             text: mainTextStr, dynamic: true,
             x: lp.textIndent, y: lp.titleY,
             x_anchor: lp.centerX ? '50%' : '0%', y_anchor: lp.titleAnchorY,
             width: lp.textWidth, font_family: 'Noto Sans JP',
             font_size: lp.titleSize, font_weight: lp.titleWeight,
-            fill_color: '#ffffff', line_height: (layout === 'center' || layout === 'billboard') ? 1.25 : 1.2,
-            text_clip: true, letter_spacing: 2, animations: titleAnim,
+            fill_color: '#ffffff',
+            line_height: isCinematic ? 1.2 : 1.15,
+            letter_spacing: isCinematic ? 3 : 2,
+            shadow_color: 'rgba(0,0,0,0.55)', shadow_blur: 6, shadow_x: 0, shadow_y: 3,
+            animations: titleAnim,
         };
         if (lp.centerX)
             titleEl.text_align = 'center';
-        if (hasImg) {
-            titleEl.shadow_color = 'rgba(0,0,0,0.5)';
-            titleEl.shadow_blur = 4;
-            titleEl.shadow_x = 0;
-            titleEl.shadow_y = 2;
-        }
-        // Caption layout: text renders inside the band — no background_color needed (band provides it)
         elements.push(titleEl);
         // ── Subtitle text ─────────────────────────────────────────────────────────
         const subText = String(cut.subText || cut.subtitle || cut.textSub || '');
         if (subText) {
             const subEl = {
-                name: `sub_${nn}`, type: 'text', track: 8, time: 0.36,
+                name: `sub_${nn}`, type: 'text', track: 8, time: 0.42,
                 text: subText, dynamic: true,
                 x: lp.textIndent, y: lp.subY,
                 x_anchor: lp.centerX ? '50%' : '0%', y_anchor: lp.subAnchorY,
                 width: lp.textWidth, font_family: 'Noto Sans JP',
-                font_size: lp.subSize, fill_color: 'rgba(255,255,255,0.90)',
-                line_height: 1.3, text_clip: true, letter_spacing: 1.2, animations: subAnim,
+                font_size: lp.subSize, fill_color: 'rgba(255,255,255,0.88)',
+                font_weight: '300',
+                line_height: 1.35, letter_spacing: isCinematic ? 4 : 2.5,
+                shadow_color: 'rgba(0,0,0,0.40)', shadow_blur: 4, shadow_x: 0, shadow_y: 2,
+                animations: subAnim,
             };
             if (lp.centerX)
                 subEl.text_align = 'center';
-            if (hasImg && layout !== 'caption') {
-                subEl.shadow_color = 'rgba(0,0,0,0.4)';
-                subEl.shadow_blur = 2;
-                subEl.shadow_x = 0;
-                subEl.shadow_y = 1;
-            }
             elements.push(subEl);
         }
-        // ── Enhanced CTA on last cut ──────────────────────────────────────────────
+        // ── CTA on last cut (Canva-style: clean button + sweep line) ─────────────
         if (isLastCut) {
-            // Accent line sweep
+            // Wide accent sweep line
             elements.push({
-                type: 'shape', track: 9, time: 0.52,
+                type: 'shape', track: 9, time: 0.48,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
-                fill_color: colorPrimary,
-                width: isVertical ? '64%' : '48%', height: '0.55 vmin',
-                x: '50%', y: isVertical ? '79%' : '75%',
+                fill_mode: 'linear',
+                fill_color: [
+                    { position: 0, color: colorAccent },
+                    { position: 1, color: colorPrimary },
+                ],
+                fill_x0: '0%', fill_y0: '50%', fill_x1: '100%', fill_y1: '50%',
+                width: isVertical ? '70%' : '55%', height: '0.5 vmin',
+                x: '50%', y: isVertical ? '80%' : '76%',
                 x_anchor: '50%', y_anchor: '0%',
-                animations: [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+                animations: [{ type: 'wipe', direction: 'right', duration: 0.6, easing: 'quadratic-out' }],
             });
-            // CTA pill badge (bounces in)
+            // CTA pill
             elements.push({
-                type: 'text', track: 10, time: 0.7,
-                text: 'プロフィールをチェック →',
-                x: '50%', y: isVertical ? '83%' : '79%',
+                type: 'text', track: 10, time: 0.65,
+                text: 'プロフィールをチェック  →',
+                x: '50%', y: isVertical ? '84%' : '80%',
                 x_anchor: '50%', y_anchor: '0%',
-                width: isVertical ? '68%' : '52%',
+                width: isVertical ? '72%' : '56%',
                 font_family: 'Noto Sans JP',
-                font_size: isVertical ? '2.6 vmin' : '2.2 vmin',
+                font_size: isVertical ? '2.8 vmin' : '2.3 vmin',
                 font_weight: '700', fill_color: '#ffffff', text_align: 'center',
-                background_color: colorAccent, background_x_padding: 18, background_y_padding: 10,
-                letter_spacing: 1,
-                animations: [{ type: 'scale', start_scale: '82%', end_scale: '100%', fade: true, duration: 0.5, easing: 'back-out' }],
+                letter_spacing: 2,
+                background_color: colorAccent,
+                background_x_padding: 22, background_y_padding: 12,
+                shadow_color: 'rgba(0,0,0,0.30)', shadow_blur: 8, shadow_x: 0, shadow_y: 4,
+                animations: [{ type: 'scale', start_scale: '78%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }],
             });
         }
         return {

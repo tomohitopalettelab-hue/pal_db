@@ -406,32 +406,39 @@ const resolveSubAnim = (animation: string, idx: number): any[] => {
   return SUB_AUTO[idx % SUB_AUTO.length];
 };
 
-// ── Ken Burns: pan + zoom via keyframes (Canva-grade cinematic motion) ──────
+// ── Ken Burns: cinematic pan + zoom (more dramatic for professional feel) ────
 const resolveKenBurns = (idx: number, dur: number): Record<string, any> => {
-  // zoom: alternating in/out
+  // Alternating zoom-in and zoom-out patterns — more dramatic range (14-20%)
   const scales: [string, string][] = [
-    ['100%', '115%'], ['116%', '102%'], ['100%', '114%'], ['113%', '100%'],
-    ['102%', '116%'], ['115%', '100%'], ['100%', '113%'], ['112%', '100%'],
+    ['100%', '119%'], // slow zoom in
+    ['120%', '102%'], // dramatic zoom out
+    ['100%', '117%'], // gentle zoom in
+    ['118%', '100%'], // pull back
+    ['102%', '120%'], // zoom in from slightly wide
+    ['119%', '100%'], // zoom out to original
+    ['100%', '116%'], // classic zoom in
+    ['117%', '101%'], // subtle zoom out
   ];
   const [s0, s1] = scales[idx % scales.length];
-  // pan: subtle drift in 8 directions
+
+  // Pan: more noticeable drift (3.5% range) for visible motion
   const pans = [
-    { x0: '50%', y0: '50%', x1: '52.5%', y1: '48.5%' },
-    { x0: '52%', y0: '52%', x1: '49.5%', y1: '50%'   },
-    { x0: '49%', y0: '51%', x1: '51.5%', y1: '49%'   },
-    { x0: '52%', y0: '49%', x1: '50%',   y1: '51.5%' },
-    { x0: '50%', y0: '52%', x1: '52%',   y1: '50%'   },
-    { x0: '51%', y0: '50%', x1: '49%',   y1: '52%'   },
-    { x0: '49%', y0: '49%', x1: '51%',   y1: '51%'   },
-    { x0: '52%', y0: '51%', x1: '50%',   y1: '49%'   },
+    { x0: '50%', y0: '50%',  x1: '53.5%', y1: '47.5%' }, // drift right+up
+    { x0: '53%', y0: '53%',  x1: '49.5%', y1: '50.5%' }, // drift left+down
+    { x0: '48%', y0: '51%',  x1: '51.5%', y1: '48.5%' }, // drift right+up
+    { x0: '52%', y0: '48%',  x1: '49%',   y1: '52%'   }, // drift left+down
+    { x0: '50%', y0: '53%',  x1: '53%',   y1: '49.5%' }, // drift right+up
+    { x0: '52%', y0: '50%',  x1: '48.5%', y1: '52.5%' }, // drift left+down
+    { x0: '48%', y0: '48%',  x1: '51.5%', y1: '51.5%' }, // diagonal drift
+    { x0: '53%', y0: '52%',  x1: '50%',   y1: '48%'   }, // drift left+up
   ];
   const p = pans[idx % pans.length];
   const t = `${dur} s`;
   return {
     x:       [{ time: '0 s', value: p.x0 }, { time: t, value: p.x1, easing: 'quintic-in-out' }],
     y:       [{ time: '0 s', value: p.y0 }, { time: t, value: p.y1, easing: 'quintic-in-out' }],
-    x_scale: [{ time: '0 s', value: s0   }, { time: t, value: s1,   easing: 'linear' }],
-    y_scale: [{ time: '0 s', value: s0   }, { time: t, value: s1,   easing: 'linear' }],
+    x_scale: [{ time: '0 s', value: s0   }, { time: t, value: s1,   easing: 'quadratic-in-out' }],
+    y_scale: [{ time: '0 s', value: s0   }, { time: t, value: s1,   easing: 'quadratic-in-out' }],
   };
 };
 

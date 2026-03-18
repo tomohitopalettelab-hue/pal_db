@@ -1038,7 +1038,7 @@ app.post('/api/pal-video/jobs', async (req, res) => {
         return res.status(400).json({ success: false, error: message });
     }
 });
-// デバッグ用: Creatomateに送るsource JSONを返す（実際には送らない）
+// デバッグ用: source生成 + Creatomate送信テスト
 app.post('/api/pal-video/debug-source', async (req, res) => {
     try {
         const jobId = String(req.body?.jobId || '').trim();
@@ -1049,7 +1049,27 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
             return res.status(404).json({ success: false, error: 'job not found' });
         const payload = (job.payload || {});
         const source = buildCreatomateInlineSource(payload);
-        return res.json({ success: true, source, payloadCutsCount: payload.cuts?.length ?? 0 });
+        const bodyJson = JSON.stringify({ source });
+        // Creatomateへの実際送信テスト
+        let creatomateStatus = null;
+        let creatomateResponse = null;
+        if (CREATOMATE_API_KEY) {
+            const ctRes = await fetch(CREATOMATE_API_URL, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${CREATOMATE_API_KEY}`, 'Content-Type': 'application/json' },
+                body: bodyJson,
+            });
+            creatomateStatus = ctRes.status;
+            creatomateResponse = await ctRes.json().catch(() => null);
+        }
+        return res.json({
+            success: true,
+            payloadCutsCount: payload.cuts?.length ?? 0,
+            sourceElementsCount: source.elements.length,
+            sourceSizeBytes: bodyJson.length,
+            creatomateStatus,
+            creatomateResponse,
+        });
     }
     catch (error) {
         const message = error instanceof Error ? error.message : 'failed';

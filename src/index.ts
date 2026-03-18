@@ -743,6 +743,7 @@ const renderCreatomateJob = async (_req: Request, job: any) => {
       'Content-Type': 'application/json',
     },
     body: bodyJson,
+    signal: AbortSignal.timeout(80000),
   });
 
   const data = await response.json().catch(() => ({}));

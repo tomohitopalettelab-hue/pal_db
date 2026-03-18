@@ -685,6 +685,7 @@ const renderCreatomateJob = async (_req, job) => {
             'Content-Type': 'application/json',
         },
         body: bodyJson,
+        signal: AbortSignal.timeout(80000),
     });
     const data = await response.json().catch(() => ({}));
     console.log('[pal-db] creatomate render response', {

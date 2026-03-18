@@ -737,7 +737,9 @@ const renderCreatomateJob = async (_req, job) => {
         if (polled) {
             finalItem = polled;
             if (polled.status === 'failed') {
-                throw new Error(`Creatomate render failed: ${JSON.stringify(polled.error || polled.errorMessage || 'unknown')}`);
+                const errMsg = polled.error_message || polled.error || polled.errorMessage || 'unknown';
+                console.error('[pal-db] creatomate render failed', { renderId, errMsg, polled });
+                throw new Error(`Creatomate render failed: ${JSON.stringify(errMsg)}`);
             }
         }
         else {
@@ -1084,7 +1086,7 @@ app.post('/api/pal-video/jobs', async (req, res) => {
         return res.status(400).json({ success: false, error: message });
     }
 });
-// デバッグ用: source生成 + Creatomate送信テスト
+// デバッグ用: source生成 + Creatomate送信 + ポーリングでエラー詳細取得
 app.post('/api/pal-video/debug-source', async (req, res) => {
     try {
         const jobId = String(req.body?.jobId || '').trim();
@@ -1098,7 +1100,8 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
         const bodyJson = JSON.stringify({ source });
         // Creatomateへの実際送信テスト
         let creatomateStatus = null;
-        let creatomateResponse = null;
+        let creatomateInitialResponse = null;
+        let creatomateFinalResponse = null;
         if (CREATOMATE_API_KEY) {
             const ctRes = await fetch(CREATOMATE_API_URL, {
                 method: 'POST',
@@ -1106,7 +1109,13 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
                 body: bodyJson,
             });
             creatomateStatus = ctRes.status;
-            creatomateResponse = await ctRes.json().catch(() => null);
+            creatomateInitialResponse = await ctRes.json().catch(() => null);
+            // ポーリングしてエラー詳細を取得
+            const initItem = Array.isArray(creatomateInitialResponse) ? creatomateInitialResponse[0] : creatomateInitialResponse;
+            const renderId = initItem?.id;
+            if (renderId) {
+                creatomateFinalResponse = await pollCreatomateRender(renderId, 90000);
+            }
         }
         return res.json({
             success: true,
@@ -1114,7 +1123,8 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
             sourceElementsCount: source.elements.length,
             sourceSizeBytes: bodyJson.length,
             creatomateStatus,
-            creatomateResponse,
+            creatomateInitialResponse,
+            creatomateFinalResponse,
         });
     }
     catch (error) {

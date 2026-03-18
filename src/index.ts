@@ -727,11 +727,13 @@ const renderCreatomateJob = async (_req: Request, job: any) => {
 
   const source = buildCreatomateInlineSource(payload);
 
+  const bodyJson = JSON.stringify({ source });
   console.log('[pal-db] creatomate render request', {
     jobId: job.id,
     destination: String(payload?.destination || payload?.purpose || ''),
     sceneCount: (payload?.cuts as any[] | undefined)?.length ?? 0,
     dimensions: `${source.width}x${source.height}`,
+    sourcePreview: bodyJson.slice(0, 3000),
   });
 
   const response = await fetch(CREATOMATE_API_URL, {
@@ -740,7 +742,7 @@ const renderCreatomateJob = async (_req: Request, job: any) => {
       Authorization: `Bearer ${CREATOMATE_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ source }),
+    body: bodyJson,
   });
 
   const data = await response.json().catch(() => ({}));
@@ -748,6 +750,7 @@ const renderCreatomateJob = async (_req: Request, job: any) => {
     jobId: job.id,
     status: response.status,
     renderId: Array.isArray(data) ? data[0]?.id : data?.id,
+    errorData: response.ok ? undefined : JSON.stringify(data),
   });
   if (!response.ok) {
     throw new Error((Array.isArray(data) ? data[0]?.message : data?.message) || 'creatomate render failed');

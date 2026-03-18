@@ -1134,9 +1134,12 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
     const elements: any[] = [bgElement];
 
     // ── Overlay layers (Canva-grade gradient treatments) ─────────────────────
-    // isBottom = text at bottom, isTop = text at top
-    const isBottom = layout === 'bottom';
-    const isTop    = layout === 'top';
+    // isBottom = text at bottom, isTop/isBillboard = text at top
+    const isBottom    = layout === 'bottom';
+    const isTop       = layout === 'top';
+    const isBillboard = layout === 'billboard';
+    // For gradient direction: text at top → dark at top (gradY0='100%', gradY1='0%')
+    //                         text at bottom → dark at bottom (gradY0='0%', gradY1='100%')
 
     if (layout === 'center') {
       // Cinematic: full gradient overlay darker at bottom, brand-tinted
@@ -1187,8 +1190,9 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
       });
     } else {
       // bottom / top / billboard — directional gradient overlay (Canva-style)
-      const gradY0 = isTop ? '100%' : '0%';   // gradient start (transparent side)
-      const gradY1 = isTop ? '0%' : '100%';   // gradient end (dark side)
+      // billboard uses same direction as top (text at top → dark at top side)
+      const gradY0 = (isTop || isBillboard) ? '100%' : '0%';  // transparent side
+      const gradY1 = (isTop || isBillboard) ? '0%' : '100%';  // dark side
       // Full-frame vignette (subtle)
       elements.push({
         type: 'shape', track: 2, time: 0,

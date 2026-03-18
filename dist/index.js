@@ -309,10 +309,11 @@ const buildCreatomateInlineSource = (payload) => {
                 exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
             };
         }
+        // 'blur' は Composition レベルでは無効 → scale+fadeで代替
         if (t === 'blur')
             return {
-                animations: [{ type: 'blur', blur: 25, fade: true, duration: 0.6, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'blur', blur: 15, fade: true, duration: 0.4, easing: 'quadratic-in' }],
+                animations: [{ type: 'scale', start_scale: '105%', end_scale: '100%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+                exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
             };
         if (t === 'bounce')
             return {
@@ -335,7 +336,7 @@ const buildCreatomateInlineSource = (payload) => {
             { animations: [{ type: 'slide', direction: 'up', duration: 0.45, fade: false, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }] },
             { animations: [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
             { animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'blur', blur: 20, fade: true, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'blur', blur: 12, fade: true, duration: 0.35, easing: 'quadratic-in' }] },
+            { animations: [{ type: 'scale', start_scale: '106%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
             { animations: [{ type: 'color-wipe', direction: 'up', color: colorPrimary, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
             { animations: [{ type: 'slide', direction: 'right', duration: 0.45, fade: false, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }] },
             { animations: [{ type: 'scale', start_scale: '82%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },

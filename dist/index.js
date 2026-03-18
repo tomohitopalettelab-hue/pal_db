@@ -172,6 +172,248 @@ const BGM_URL_MAP = {
     natural_warm: 'https://cdn.pixabay.com/audio/2021/11/13/audio_7b6e8dd7bf.mp3',
 };
 // ─────────────────────────────────────────────────────────────────────────────
+// Module-level resolver functions (shared across template builders)
+// ─────────────────────────────────────────────────────────────────────────────
+const resolveSceneTransition = (transition, idx, colorPrimary, colorAccent) => {
+    const t = String(transition || '').toLowerCase();
+    if (t === 'none')
+        return { animations: [], exit_animations: [] };
+    if (t === 'fade')
+        return {
+            animations: [{ type: 'fade', duration: 0.6, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.45, easing: 'quadratic-in' }],
+        };
+    if (t === 'slide') {
+        const dirs = ['left', 'up', 'right', 'left', 'up'];
+        return {
+            animations: [{ type: 'slide', direction: dirs[idx % dirs.length], duration: 0.5, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'slide', direction: dirs[(idx + 2) % dirs.length], duration: 0.4, easing: 'quadratic-in' }],
+        };
+    }
+    if (t === 'zoom') {
+        const scales = ['112%', '88%', '115%', '85%'];
+        const easings = ['back-out', 'elastic-out', 'quadratic-out', 'back-out'];
+        return {
+            animations: [{ type: 'scale', start_scale: scales[idx % 4], end_scale: '100%', fade: true, duration: 0.65, easing: easings[idx % 4] }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: idx % 2 === 0 ? '92%' : '108%', fade: true, duration: 0.4, easing: 'quadratic-in' }],
+        };
+    }
+    if (t === 'wipe') {
+        const dirs = ['right', 'up', 'left', 'up', 'right'];
+        return {
+            animations: [{ type: 'wipe', direction: dirs[idx % dirs.length], duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
+        };
+    }
+    if (t === 'color-wipe') {
+        const dirs = ['right', 'up', 'left', 'down', 'right'];
+        const color = idx % 2 === 0 ? colorAccent : colorPrimary;
+        return {
+            animations: [{ type: 'color-wipe', direction: dirs[idx % dirs.length], color, duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
+        };
+    }
+    if (t === 'flip') {
+        const rots = ['-18°', '18°', '-22°', '22°'];
+        return {
+            animations: [{ type: 'spin', rotation: rots[idx % 4], fade: true, duration: 0.7, easing: 'back-out' }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: '90%', fade: true, duration: 0.4, easing: 'quadratic-in' }],
+        };
+    }
+    if (t === 'blur')
+        return {
+            animations: [{ type: 'scale', start_scale: '107%', end_scale: '100%', fade: true, duration: 0.65, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: '94%', fade: true, duration: 0.4, easing: 'quadratic-in' }],
+        };
+    if (t === 'bounce')
+        return {
+            animations: [{ type: 'scale', start_scale: '75%', end_scale: '100%', fade: true, duration: 0.75, easing: 'elastic-out' }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: '88%', fade: true, duration: 0.35, easing: 'quadratic-in' }],
+        };
+    if (t === 'push') {
+        const dirsIn = ['left', 'up', 'right', 'down'];
+        const dirsOut = ['right', 'down', 'left', 'up'];
+        return {
+            animations: [{ type: 'slide', direction: dirsIn[idx % 4], duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'slide', direction: dirsOut[idx % 4], duration: 0.45, easing: 'quadratic-in' }],
+        };
+    }
+    if (t === 'film-roll')
+        return {
+            animations: [{ type: 'film-roll', direction: idx % 2 === 0 ? 'left' : 'right', duration: 0.7, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }],
+        };
+    if (t === 'circular')
+        return {
+            animations: [{ type: 'circular-wipe', direction: 'in', duration: 0.65, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
+        };
+    if (t === 'stripe')
+        return {
+            animations: [{ type: 'stripe', direction: idx % 2 === 0 ? 'right' : 'up', duration: 0.6, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
+        };
+    // Auto: dramatic 16-pattern cycle
+    const AUTO = [
+        // 0: color-wipe accent right — bold entrance
+        { animations: [{ type: 'color-wipe', direction: 'right', color: colorAccent, duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
+        // 1: elastic zoom in from small — energetic pop
+        { animations: [{ type: 'scale', start_scale: '72%', end_scale: '100%', fade: true, duration: 0.8, easing: 'elastic-out' }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: '92%', fade: true, duration: 0.4, easing: 'quadratic-in' }] },
+        // 2: slide from left — clean modern
+        { animations: [{ type: 'slide', direction: 'left', duration: 0.5, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'slide', direction: 'right', duration: 0.4, easing: 'quadratic-in' }] },
+        // 3: color-wipe primary up — brand statement
+        { animations: [{ type: 'color-wipe', direction: 'up', color: colorPrimary, duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
+        // 4: back-out zoom from large — cinematic reveal
+        { animations: [{ type: 'scale', start_scale: '118%', end_scale: '100%', fade: true, duration: 0.7, easing: 'back-out' }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: '96%', fade: true, duration: 0.45, easing: 'quadratic-in' }] },
+        // 5: slide up — dynamic upward motion
+        { animations: [{ type: 'slide', direction: 'up', duration: 0.5, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+        // 6: spin rotation — dramatic flip
+        { animations: [{ type: 'spin', rotation: '-14°', fade: true, duration: 0.65, easing: 'back-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+        // 7: scale punch from tiny — very energetic
+        { animations: [{ type: 'scale', start_scale: '60%', end_scale: '100%', fade: true, duration: 0.75, easing: 'elastic-out' }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: '88%', fade: true, duration: 0.4, easing: 'quadratic-in' }] },
+        // 8: wipe right — clean wipe
+        { animations: [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+        // 9: color-wipe accent down — vertical brand
+        { animations: [{ type: 'color-wipe', direction: 'down', color: colorAccent, duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
+        // 10: slide from right — counter flow
+        { animations: [{ type: 'slide', direction: 'right', duration: 0.5, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'slide', direction: 'left', duration: 0.4, easing: 'quadratic-in' }] },
+        // 11: zoom out back-in — stylish pull-back
+        { animations: [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.7, easing: 'back-out' }],
+            exit_animations: [{ type: 'scale', start_scale: '100%', end_scale: '108%', fade: true, duration: 0.4, easing: 'quadratic-in' }] },
+        // 12: spin reverse — cinematic
+        { animations: [{ type: 'spin', rotation: '16°', fade: true, duration: 0.65, easing: 'back-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+        // 13: color-wipe primary left
+        { animations: [{ type: 'color-wipe', direction: 'left', color: colorPrimary, duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
+        // 14: elastic bounce in
+        { animations: [{ type: 'scale', start_scale: '78%', end_scale: '100%', fade: true, duration: 0.8, easing: 'elastic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
+        // 15: wipe up — upward sweep
+        { animations: [{ type: 'wipe', direction: 'up', duration: 0.55, easing: 'quadratic-out' }],
+            exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
+    ];
+    return AUTO[idx % AUTO.length];
+};
+const resolveTitleAnim = (animation, idx, layout) => {
+    const a = String(animation || '').toLowerCase();
+    if (a === 'none')
+        return [];
+    if (a === 'fade')
+        return [{ type: 'fade', duration: 0.7, easing: 'quadratic-out' }];
+    if (a === 'zoom')
+        return [{ type: 'scale', start_scale: '82%', end_scale: '100%', fade: true, duration: 0.7, easing: 'back-out' }];
+    if (a === 'pop')
+        return [{ type: 'scale', start_scale: '68%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }];
+    if (a === 'elastic')
+        return [{ type: 'scale', start_scale: '55%', end_scale: '100%', fade: true, duration: 0.85, easing: 'elastic-out' }];
+    if (a === 'blur')
+        return [{ type: 'blur', blur: 28, fade: true, duration: 0.75, easing: 'quadratic-out' }];
+    if (a === 'wipe')
+        return [{ type: 'wipe', direction: 'right', duration: 0.65, easing: 'quadratic-out' }];
+    if (a === 'rise')
+        return [{ type: 'slide', direction: 'up', distance: '22%', fade: true, duration: 0.75, easing: 'quadratic-out' }];
+    if (a === 'drop')
+        return [{ type: 'slide', direction: layout === 'top' || layout === 'billboard' ? 'down' : 'up', distance: '15%', fade: true, duration: 0.65, easing: 'back-out' }];
+    if (a === 'typewriter')
+        return [{ type: 'typewriter', duration: 0.8, split: 'character' }];
+    if (a === 'text-slide')
+        return [{ type: 'text-slide', direction: 'up', duration: 0.65, easing: 'back-out' }];
+    if (a === 'spin')
+        return [{ type: 'spin', rotation: '-12°', fade: true, duration: 0.7, easing: 'back-out' }];
+    // 'slide' or default — rich auto-cycle of 12 distinct animations based on layout+idx
+    const AUTO_TITLE = [
+        [{ type: 'slide', direction: 'up', distance: '12%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '70%', end_scale: '100%', fade: true, duration: 0.7, easing: 'elastic-out' }],
+        [{ type: 'text-slide', direction: 'up', duration: 0.65, easing: 'back-out' }],
+        [{ type: 'slide', direction: 'left', distance: '10%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '85%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }],
+        [{ type: 'wipe', direction: 'right', duration: 0.65, easing: 'quadratic-out' }],
+        [{ type: 'blur', blur: 24, fade: true, duration: 0.7, easing: 'quadratic-out' }],
+        [{ type: 'slide', direction: 'right', distance: '10%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '58%', end_scale: '100%', fade: true, duration: 0.8, easing: 'elastic-out' }],
+        [{ type: 'spin', rotation: '-10°', fade: true, duration: 0.65, easing: 'back-out' }],
+        [{ type: 'slide', direction: 'down', distance: '8%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        [{ type: 'text-slide', direction: 'left', duration: 0.6, easing: 'quadratic-out' }],
+    ];
+    const baseIdx = layout === 'center' ? idx + 2
+        : layout === 'billboard' ? idx + 4
+            : layout === 'caption' ? idx + 6
+                : layout === 'top' ? idx + 8
+                    : idx;
+    return AUTO_TITLE[baseIdx % AUTO_TITLE.length];
+};
+const resolveSubAnim = (animation, idx) => {
+    const a = String(animation || '').toLowerCase();
+    if (a === 'none')
+        return [];
+    if (a === 'blur')
+        return [{ type: 'blur', blur: 16, fade: true, duration: 0.7, easing: 'quadratic-out' }];
+    if (a === 'zoom')
+        return [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }];
+    if (a === 'pop')
+        return [{ type: 'scale', start_scale: '80%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }];
+    if (a === 'elastic')
+        return [{ type: 'scale', start_scale: '72%', end_scale: '100%', fade: true, duration: 0.65, easing: 'elastic-out' }];
+    if (a === 'fade')
+        return [{ type: 'fade', duration: 0.7, easing: 'quadratic-out' }];
+    if (a === 'rise')
+        return [{ type: 'slide', direction: 'up', distance: '14%', fade: true, duration: 0.65, easing: 'quadratic-out' }];
+    if (a === 'wipe')
+        return [{ type: 'wipe', direction: 'right', duration: 0.6, easing: 'quadratic-out' }];
+    // rich auto-cycle: 8 distinct sub-animations
+    const SUB_AUTO = [
+        [{ type: 'slide', direction: 'up', distance: '8%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
+        [{ type: 'fade', duration: 0.7, easing: 'quadratic-out' }],
+        [{ type: 'blur', blur: 12, fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        [{ type: 'slide', direction: 'left', distance: '6%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '90%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }],
+        [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
+        [{ type: 'slide', direction: 'right', distance: '6%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
+        [{ type: 'blur', blur: 8, fade: true, duration: 0.5, easing: 'quadratic-out' }],
+    ];
+    return SUB_AUTO[idx % SUB_AUTO.length];
+};
+// ── Ken Burns: pan + zoom via keyframes (Canva-grade cinematic motion) ──────
+const resolveKenBurns = (idx, dur) => {
+    // zoom: alternating in/out
+    const scales = [
+        ['100%', '115%'], ['116%', '102%'], ['100%', '114%'], ['113%', '100%'],
+        ['102%', '116%'], ['115%', '100%'], ['100%', '113%'], ['112%', '100%'],
+    ];
+    const [s0, s1] = scales[idx % scales.length];
+    // pan: subtle drift in 8 directions
+    const pans = [
+        { x0: '50%', y0: '50%', x1: '52.5%', y1: '48.5%' },
+        { x0: '52%', y0: '52%', x1: '49.5%', y1: '50%' },
+        { x0: '49%', y0: '51%', x1: '51.5%', y1: '49%' },
+        { x0: '52%', y0: '49%', x1: '50%', y1: '51.5%' },
+        { x0: '50%', y0: '52%', x1: '52%', y1: '50%' },
+        { x0: '51%', y0: '50%', x1: '49%', y1: '52%' },
+        { x0: '49%', y0: '49%', x1: '51%', y1: '51%' },
+        { x0: '52%', y0: '51%', x1: '50%', y1: '49%' },
+    ];
+    const p = pans[idx % pans.length];
+    const t = `${dur} s`;
+    return {
+        x: [{ time: '0 s', value: p.x0 }, { time: t, value: p.x1, easing: 'quintic-in-out' }],
+        y: [{ time: '0 s', value: p.y0 }, { time: t, value: p.y1, easing: 'quintic-in-out' }],
+        x_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
+        y_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
+    };
+};
+// ─────────────────────────────────────────────────────────────────────────────
 // Collage template builder (白背景 / ポラロイドグリッド / Canvaスタイル)
 // ─────────────────────────────────────────────────────────────────────────────
 const buildCollageInlineSource = (payload) => {
@@ -348,6 +590,282 @@ const buildCollageInlineSource = (payload) => {
     }
     return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// Magazine template builder (サイドパネルマガジンスタイル)
+// ─────────────────────────────────────────────────────────────────────────────
+const buildMagazineInlineSource = (payload) => {
+    const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
+    const dims = (DESTINATION_DIMENSIONS[destination] || [1080, 1920]);
+    const [w, h] = dims;
+    const isVertical = h > w;
+    const isWide = w > h;
+    const colorPrimary = String(payload?.colorPrimary || '#0D1B2A');
+    const colorAccent = String(payload?.colorAccent || '#E94560');
+    const textColor = String(payload?.textColor || '#FFFFFF');
+    const bgmRaw = String(payload?.bgm || '');
+    const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+    const rawCuts = Array.isArray(payload?.cuts) && payload.cuts.length > 0
+        ? payload.cuts
+        : [{ mainText: String(payload?.telopMain || ''), subText: String(payload?.telopSub || ''), duration: 5, imageUrl: '' }];
+    const brandName = String(payload?.title || '').toUpperCase() || 'BRAND';
+    const scenes = rawCuts.slice(0, 7).map((cut, i) => {
+        const dur = Number(cut.duration || cut.durationSec || 5);
+        const mainText = String(cut.mainText || '');
+        const subText = String(cut.subText || '');
+        const imgUrl = String(cut.imageUrl || '').trim();
+        const hasImg = imgUrl.startsWith('http');
+        const isLeft = i % 2 === 0; // alternate panel side each scene
+        const timeStart = rawCuts.slice(0, i).reduce((acc, c) => acc + Number(c.duration || 5), 0);
+        const kbProps = resolveKenBurns(i, dur);
+        const elements = [];
+        // ── Full bleed image (Ken Burns) ────────────────────────────────────────
+        elements.push(hasImg ? {
+            type: 'image', track: 1, time: 0, source: imgUrl, dynamic: true,
+            width: '100%', height: '100%', x_anchor: '50%', y_anchor: '50%', fill_mode: 'cover',
+            ...kbProps,
+        } : {
+            type: 'shape', track: 1, time: 0,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_mode: 'linear',
+            fill_color: [{ offset: 0, color: colorPrimary }, { offset: 1, color: colorAccent }],
+            fill_x0: '0%', fill_y0: '0%', fill_x1: '100%', fill_y1: '100%',
+            width: '100%', height: '100%', dynamic: true,
+        });
+        // ── Global dark scrim ────────────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 2, time: 0,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: 'rgba(0,0,0,0.30)',
+            width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
+        });
+        // ── Side color panel ─────────────────────────────────────────────────────
+        const panelW = isVertical ? '50%' : '44%';
+        const panelX = isLeft ? '0%' : '100%';
+        const panelAnchorX = isLeft ? '0%' : '100%';
+        elements.push({
+            type: 'shape', track: 3, time: 0,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_mode: 'linear',
+            fill_color: [
+                { offset: 0, color: colorPrimary + 'F0' },
+                { offset: 1, color: colorPrimary + 'C0' },
+            ],
+            fill_x0: isLeft ? '0%' : '100%', fill_y0: '50%',
+            fill_x1: isLeft ? '100%' : '0%', fill_y1: '50%',
+            width: panelW, height: '100%',
+            x: panelX, y: '0%', x_anchor: panelAnchorX, y_anchor: '0%',
+            animations: [{ type: 'slide', direction: isLeft ? 'right' : 'left', distance: '6%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        });
+        // ── Bright accent edge line ──────────────────────────────────────────────
+        const lineX = isLeft ? panelW : `calc(100% - ${panelW})`;
+        elements.push({
+            type: 'shape', track: 4, time: 0.18,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: colorAccent,
+            width: '0.7 vmin', height: isVertical ? '65%' : '60%',
+            x: lineX, y: '50%', x_anchor: '50%', y_anchor: '50%',
+            animations: [{ type: 'wipe', direction: 'down', duration: 0.7, easing: 'quadratic-out' }],
+        });
+        const textX = isLeft ? '25%' : '75%';
+        // ── Brand label ──────────────────────────────────────────────────────────
+        elements.push({
+            type: 'text', track: 5, time: 0.18,
+            text: brandName,
+            x: textX, y: isVertical ? '11%' : '9%',
+            x_anchor: '50%', y_anchor: '50%',
+            width: isVertical ? '46%' : '40%',
+            font_family: 'Noto Sans JP',
+            font_size: '1.8 vmin', font_weight: '200',
+            fill_color: colorAccent,
+            letter_spacing: 6, text_align: 'center',
+            animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+        });
+        // ── Scene number ─────────────────────────────────────────────────────────
+        elements.push({
+            type: 'text', track: 6, time: 0.1,
+            text: String(i + 1).padStart(2, '0'),
+            x: isLeft ? '90%' : '10%', y: '7%',
+            x_anchor: '50%', y_anchor: '50%',
+            font_family: 'Noto Sans JP',
+            font_size: '2.2 vmin', font_weight: '200',
+            fill_color: 'rgba(255,255,255,0.45)',
+            letter_spacing: 2,
+            animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-out' }],
+        });
+        // ── Main title ───────────────────────────────────────────────────────────
+        if (mainText) {
+            elements.push({
+                type: 'text', track: 7, time: 0.30,
+                text: mainText, dynamic: true,
+                x: textX, y: isVertical ? '46%' : '44%',
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '44%' : '38%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '5.8 vmin' : '4.8 vmin',
+                font_weight: '900', fill_color: textColor,
+                letter_spacing: 2, text_align: 'center', line_height: 1.25,
+                shadow_color: 'rgba(0,0,0,0.4)', shadow_blur: 8, shadow_x: 0, shadow_y: 3,
+                animations: [{ type: 'text-slide', direction: 'up', duration: 0.65, easing: 'back-out' }],
+            });
+        }
+        // ── Subtitle ─────────────────────────────────────────────────────────────
+        if (subText) {
+            elements.push({
+                type: 'text', track: 8, time: 0.45,
+                text: subText, dynamic: true,
+                x: textX, y: isVertical ? '57%' : '55%',
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '44%' : '38%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '2.8 vmin' : '2.4 vmin',
+                font_weight: '300', fill_color: 'rgba(255,255,255,0.80)',
+                letter_spacing: 1, text_align: 'center',
+                animations: [{ type: 'slide', direction: 'up', distance: '5%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
+            });
+        }
+        // ── Accent wipe line ─────────────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 9, time: 0.5,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: colorAccent,
+            width: isVertical ? '22%' : '18%', height: '0.5 vmin',
+            x: textX, y: isVertical ? '62%' : '61%', x_anchor: '50%', y_anchor: '50%',
+            animations: [{ type: 'wipe', direction: isLeft ? 'right' : 'left', duration: 0.55, easing: 'quadratic-out' }],
+        });
+        const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i, colorPrimary, colorAccent);
+        return { type: 'composition', track: i + 1, time: timeStart, duration: dur, animations, exit_animations, elements };
+    });
+    const rootElements = [...scenes];
+    if (bgmUrl)
+        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+    return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
+};
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimal template builder (超ミニマル白背景 / 薄い書体 / 余白重視)
+// ─────────────────────────────────────────────────────────────────────────────
+const buildMinimalInlineSource = (payload) => {
+    const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
+    const dims = (DESTINATION_DIMENSIONS[destination] || [1080, 1920]);
+    const [w, h] = dims;
+    const isVertical = h > w;
+    const colorAccent = String(payload?.colorAccent || '#888888');
+    const textColor = String(payload?.textColor || '#1A1A1A');
+    const bgColor = String(payload?.bgColor || '#F7F5F2');
+    const bgmRaw = String(payload?.bgm || '');
+    const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+    const rawCuts = Array.isArray(payload?.cuts) && payload.cuts.length > 0
+        ? payload.cuts
+        : [{ mainText: String(payload?.telopMain || ''), subText: String(payload?.telopSub || ''), duration: 5, imageUrl: '' }];
+    const scenes = rawCuts.slice(0, 7).map((cut, i) => {
+        const dur = Number(cut.duration || cut.durationSec || 5);
+        const mainText = String(cut.mainText || '');
+        const subText = String(cut.subText || '');
+        const imgUrl = String(cut.imageUrl || '').trim();
+        const hasImg = imgUrl.startsWith('http');
+        const timeStart = rawCuts.slice(0, i).reduce((acc, c) => acc + Number(c.duration || 5), 0);
+        const elements = [];
+        // ── Clean background ────────────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 1, time: 0,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: bgColor,
+            width: '100%', height: '100%', x: '50%', y: '50%', x_anchor: '50%', y_anchor: '50%',
+        });
+        // ── Central image (subtle rounded card) ─────────────────────────────────
+        if (hasImg) {
+            const imgH = isVertical ? '45%' : '55%';
+            const imgW = isVertical ? '82%' : '70%';
+            // White card shadow behind image
+            elements.push({
+                type: 'shape', track: 2, time: 0,
+                path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+                fill_color: '#FFFFFF',
+                width: `calc(${imgW} + 2%)`, height: `calc(${imgH} + 1.5%)`,
+                x: '50%', y: isVertical ? '38%' : '45%', x_anchor: '50%', y_anchor: '50%',
+                border_radius: 8,
+                shadow_color: 'rgba(0,0,0,0.08)', shadow_blur: 24, shadow_x: 0, shadow_y: 8,
+                animations: [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
+            });
+            elements.push({
+                type: 'image', track: 3, time: 0, source: imgUrl, dynamic: true,
+                width: imgW, height: imgH,
+                x: '50%', y: isVertical ? '38%' : '45%', x_anchor: '50%', y_anchor: '50%',
+                fill_mode: 'cover', border_radius: 6,
+                animations: [{ type: 'scale', start_scale: '102%', end_scale: '100%', fade: true, duration: 1.2, easing: 'quadratic-out' }],
+            });
+        }
+        // ── Thin top accent line ─────────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 4, time: 0.2,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: colorAccent,
+            width: isVertical ? '10%' : '8%', height: '0.25 vmin',
+            x: '50%', y: isVertical ? '5%' : '4%', x_anchor: '50%', y_anchor: '50%',
+            animations: [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
+        });
+        // ── Main text (ultra-light, large) ───────────────────────────────────────
+        const textY = hasImg
+            ? (isVertical ? '70%' : '78%')
+            : (isVertical ? '50%' : '50%');
+        if (mainText) {
+            elements.push({
+                type: 'text', track: 5, time: 0.35,
+                text: mainText, dynamic: true,
+                x: '50%', y: textY,
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '84%' : '75%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '5.5 vmin' : '4.8 vmin',
+                font_weight: '200',
+                fill_color: textColor,
+                letter_spacing: 8, text_align: 'center', line_height: 1.4,
+                animations: [{ type: 'fade', duration: 0.9, easing: 'quadratic-out' }],
+            });
+        }
+        // ── Subtitle (very thin, spaced) ─────────────────────────────────────────
+        if (subText) {
+            elements.push({
+                type: 'text', track: 6, time: 0.5,
+                text: subText, dynamic: true,
+                x: '50%', y: hasImg ? (isVertical ? '79%' : '86%') : (isVertical ? '58%' : '60%'),
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '70%' : '60%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '2.5 vmin' : '2.2 vmin',
+                font_weight: '100',
+                fill_color: `rgba(26,26,26,0.55)`,
+                letter_spacing: 5, text_align: 'center',
+                animations: [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
+            });
+        }
+        // ── Bottom thin accent line ──────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 7, time: 0.45,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: colorAccent,
+            width: isVertical ? '10%' : '8%', height: '0.25 vmin',
+            x: '50%', y: '95%', x_anchor: '50%', y_anchor: '50%',
+            animations: [{ type: 'wipe', direction: 'left', duration: 0.7, easing: 'quadratic-out' }],
+        });
+        // Minimal scene counter
+        elements.push({
+            type: 'text', track: 8, time: 0.3,
+            text: `${i + 1}`,
+            x: '90%', y: '6%', x_anchor: '50%', y_anchor: '50%',
+            font_family: 'Noto Sans JP',
+            font_size: '2.2 vmin', font_weight: '100',
+            fill_color: `rgba(26,26,26,0.30)`,
+            letter_spacing: 1,
+            animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+        });
+        const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i, colorAccent, colorAccent);
+        return { type: 'composition', track: i + 1, time: timeStart, duration: dur, animations, exit_animations, elements };
+    });
+    const rootElements = [...scenes];
+    if (bgmUrl)
+        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+    return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
+};
 const buildCreatomateInlineSource = (payload) => {
     const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
     const [w, h] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
@@ -356,6 +874,7 @@ const buildCreatomateInlineSource = (payload) => {
     const isWide = w > h;
     const colorPrimary = String(payload?.colorPrimary || '#E95464');
     const colorAccent = String(payload?.colorAccent || '#1c9a8b');
+    const textColor = String(payload?.textColor || '#ffffff');
     const bgmRaw = String(payload?.bgm || '');
     const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
     const LAYOUT_SEQ = ['bottom', 'billboard', 'caption', 'center', 'bottom', 'caption', 'bottom'];
@@ -439,181 +958,6 @@ const buildCreatomateInlineSource = (payload) => {
             titleWeight: '700', centerX: false,
         };
     };
-    // ── Scene transition resolver (10 types + 12-pattern auto-cycle) ──────────────
-    const resolveSceneTransition = (transition, idx) => {
-        const t = String(transition || '').toLowerCase();
-        if (t === 'none')
-            return { animations: [], exit_animations: [] };
-        if (t === 'fade')
-            return {
-                animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
-            };
-        if (t === 'slide') {
-            const dirs = ['left', 'up', 'right', 'left', 'up'];
-            return {
-                animations: [{ type: 'slide', direction: dirs[idx % dirs.length], duration: 0.45, fade: false, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }],
-            };
-        }
-        if (t === 'zoom') {
-            const startScale = idx % 2 === 0 ? '108%' : '93%';
-            const easing = idx % 2 === 0 ? 'quadratic-out' : 'back-out';
-            return {
-                animations: [{ type: 'scale', start_scale: startScale, end_scale: '100%', fade: true, duration: 0.55, easing }],
-                exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
-            };
-        }
-        if (t === 'wipe') {
-            const dirs = ['right', 'up', 'left', 'up', 'right'];
-            return {
-                animations: [{ type: 'wipe', direction: dirs[idx % dirs.length], duration: 0.5, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
-            };
-        }
-        if (t === 'color-wipe') {
-            const dirs = ['right', 'up', 'left', 'down', 'right'];
-            const color = idx % 2 === 0 ? colorAccent : colorPrimary;
-            return {
-                animations: [{ type: 'color-wipe', direction: dirs[idx % dirs.length], color, duration: 0.55, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
-            };
-        }
-        if (t === 'flip') {
-            const rot = idx % 2 === 0 ? '-14°' : '14°';
-            return {
-                animations: [{ type: 'spin', rotation: rot, fade: true, duration: 0.6, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
-            };
-        }
-        // 'blur' は Composition レベルでは無効 → scale+fadeで代替
-        if (t === 'blur')
-            return {
-                animations: [{ type: 'scale', start_scale: '105%', end_scale: '100%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }],
-            };
-        if (t === 'bounce')
-            return {
-                animations: [{ type: 'scale', start_scale: '82%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }],
-                exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }],
-            };
-        if (t === 'push') {
-            const dirs = ['left', 'up', 'right', 'left'];
-            return {
-                animations: [{ type: 'slide', direction: dirs[idx % dirs.length], duration: 0.5, fade: false, easing: 'quadratic-out' }],
-                exit_animations: [{ type: 'slide', direction: dirs[(idx + 2) % dirs.length], duration: 0.4, fade: false, easing: 'quadratic-in' }],
-            };
-        }
-        // Auto: smart 12-pattern cycle
-        const AUTO = [
-            { animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'slide', direction: 'left', duration: 0.45, fade: false, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'scale', start_scale: '108%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'color-wipe', direction: 'right', color: colorAccent, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'slide', direction: 'up', duration: 0.45, fade: false, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'wipe', direction: 'right', duration: 0.5, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'scale', start_scale: '106%', end_scale: '100%', fade: true, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'color-wipe', direction: 'up', color: colorPrimary, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.4, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'slide', direction: 'right', duration: 0.45, fade: false, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.3, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'scale', start_scale: '82%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
-            { animations: [{ type: 'spin', rotation: '-10°', fade: true, duration: 0.55, easing: 'quadratic-out' }], exit_animations: [{ type: 'fade', duration: 0.35, easing: 'quadratic-in' }] },
-        ];
-        return AUTO[idx % AUTO.length];
-    };
-    // ── Text animation resolvers (10 types) ──────────────────────────────────────
-    const resolveTitleAnim = (animation, idx, layout) => {
-        const a = String(animation || '').toLowerCase();
-        if (a === 'none')
-            return [];
-        if (a === 'fade')
-            return [{ type: 'fade', duration: 0.6, easing: 'quadratic-out' }];
-        if (a === 'zoom')
-            return [{ type: 'scale', start_scale: '86%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }];
-        if (a === 'pop')
-            return [{ type: 'scale', start_scale: '76%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }];
-        if (a === 'elastic')
-            return [{ type: 'scale', start_scale: '62%', end_scale: '100%', fade: true, duration: 0.7, easing: 'back-out' }];
-        if (a === 'blur')
-            return [{ type: 'blur', blur: 22, fade: true, duration: 0.7, easing: 'quadratic-out' }];
-        if (a === 'wipe')
-            return [{ type: 'wipe', direction: 'right', duration: 0.6, easing: 'quadratic-out' }];
-        if (a === 'rise')
-            return [{ type: 'slide', direction: 'up', distance: '18%', fade: true, duration: 0.7, easing: 'quadratic-out' }];
-        if (a === 'drop') {
-            const dir = (layout === 'top' || layout === 'billboard') ? 'down' : 'up';
-            return [{ type: 'slide', direction: dir, distance: '12%', fade: true, duration: 0.6, easing: 'quadratic-out' }];
-        }
-        // 'slide' or default — layout-aware direction
-        if (layout === 'center' || layout === 'caption')
-            return [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }];
-        if (layout === 'billboard') {
-            const dirs = ['down', 'left', 'down', 'right'];
-            return [{ type: 'slide', direction: dirs[idx % dirs.length], distance: '10%', fade: true, duration: 0.55, easing: 'quadratic-out' }];
-        }
-        if (layout === 'top') {
-            const dirs = ['down', 'left', 'down', 'right'];
-            return [{ type: 'slide', direction: dirs[idx % dirs.length], distance: '8%', fade: true, duration: 0.55, easing: 'quadratic-out' }];
-        }
-        const dirs = ['up', 'right', 'up', 'left', 'up', 'right', 'up'];
-        const dir = dirs[idx % dirs.length];
-        return [{ type: 'slide', direction: dir, distance: dir === 'up' ? '10%' : '7%', fade: true, duration: 0.55, easing: 'quadratic-out' }];
-    };
-    const resolveSubAnim = (animation, idx) => {
-        const a = String(animation || '').toLowerCase();
-        if (a === 'none')
-            return [];
-        if (a === 'blur')
-            return [{ type: 'blur', blur: 14, fade: true, duration: 0.65, easing: 'quadratic-out' }];
-        if (a === 'zoom')
-            return [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }];
-        if (a === 'pop')
-            return [{ type: 'scale', start_scale: '86%', end_scale: '100%', fade: true, duration: 0.5, easing: 'back-out' }];
-        if (a === 'elastic')
-            return [{ type: 'scale', start_scale: '78%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }];
-        if (a === 'fade')
-            return [{ type: 'fade', duration: 0.65, easing: 'quadratic-out' }];
-        if (a === 'rise')
-            return [{ type: 'slide', direction: 'up', distance: '12%', fade: true, duration: 0.6, easing: 'quadratic-out' }];
-        if (a === 'wipe')
-            return [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }];
-        const cycle = idx % 4;
-        if (cycle === 0)
-            return [{ type: 'slide', direction: 'up', distance: '6%', fade: true, duration: 0.5, easing: 'quadratic-out' }];
-        if (cycle === 1)
-            return [{ type: 'fade', duration: 0.65, easing: 'quadratic-out' }];
-        if (cycle === 2)
-            return [{ type: 'blur', blur: 10, fade: true, duration: 0.55, easing: 'quadratic-out' }];
-        return [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.5, easing: 'quadratic-out' }];
-    };
-    // ── Ken Burns: pan + zoom via keyframes (Canva-grade cinematic motion) ──────
-    const resolveKenBurns = (idx, dur) => {
-        // zoom: alternating in/out
-        const scales = [
-            ['100%', '115%'], ['116%', '102%'], ['100%', '114%'], ['113%', '100%'],
-            ['102%', '116%'], ['115%', '100%'], ['100%', '113%'], ['112%', '100%'],
-        ];
-        const [s0, s1] = scales[idx % scales.length];
-        // pan: subtle drift in 8 directions
-        const pans = [
-            { x0: '50%', y0: '50%', x1: '52.5%', y1: '48.5%' },
-            { x0: '52%', y0: '52%', x1: '49.5%', y1: '50%' },
-            { x0: '49%', y0: '51%', x1: '51.5%', y1: '49%' },
-            { x0: '52%', y0: '49%', x1: '50%', y1: '51.5%' },
-            { x0: '50%', y0: '52%', x1: '52%', y1: '50%' },
-            { x0: '51%', y0: '50%', x1: '49%', y1: '52%' },
-            { x0: '49%', y0: '49%', x1: '51%', y1: '51%' },
-            { x0: '52%', y0: '51%', x1: '50%', y1: '49%' },
-        ];
-        const p = pans[idx % pans.length];
-        const t = `${dur} s`;
-        return {
-            x: [{ time: '0 s', value: p.x0 }, { time: t, value: p.x1, easing: 'quintic-in-out' }],
-            y: [{ time: '0 s', value: p.y0 }, { time: t, value: p.y1, easing: 'quintic-in-out' }],
-            x_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
-            y_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
-        };
-    };
     // ── Build cuts ────────────────────────────────────────────────────────────────
     let rawCuts = [];
     if (Array.isArray(payload?.cuts) && payload.cuts.length > 0) {
@@ -650,7 +994,7 @@ const buildCreatomateInlineSource = (payload) => {
             ? cut.layout
             : LAYOUT_SEQ[i % LAYOUT_SEQ.length];
         const lp = getLayoutProps(layout);
-        const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i);
+        const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i, colorPrimary, colorAccent);
         const titleAnim = resolveTitleAnim(String(cut.animation || ''), i, layout);
         const subAnim = resolveSubAnim(String(cut.animation || ''), i);
         const kbProps = resolveKenBurns(i, dur);
@@ -856,7 +1200,7 @@ const buildCreatomateInlineSource = (payload) => {
             x_anchor: lp.centerX ? '50%' : '0%', y_anchor: lp.titleAnchorY,
             width: lp.textWidth, font_family: 'Noto Sans JP',
             font_size: lp.titleSize, font_weight: lp.titleWeight,
-            fill_color: '#ffffff',
+            fill_color: textColor,
             line_height: isCinematic ? 1.2 : 1.15,
             letter_spacing: isCinematic ? 3 : 2,
             shadow_color: 'rgba(0,0,0,0.55)', shadow_blur: 6, shadow_x: 0, shadow_y: 3,
@@ -874,7 +1218,7 @@ const buildCreatomateInlineSource = (payload) => {
                 x: lp.textIndent, y: lp.subY,
                 x_anchor: lp.centerX ? '50%' : '0%', y_anchor: lp.subAnchorY,
                 width: lp.textWidth, font_family: 'Noto Sans JP',
-                font_size: lp.subSize, fill_color: 'rgba(255,255,255,0.88)',
+                font_size: lp.subSize, fill_color: textColor === '#ffffff' ? 'rgba(255,255,255,0.88)' : textColor,
                 font_weight: '300',
                 line_height: 1.35, letter_spacing: isCinematic ? 4 : 2.5,
                 shadow_color: 'rgba(0,0,0,0.40)', shadow_blur: 4, shadow_x: 0, shadow_y: 2,
@@ -947,9 +1291,11 @@ const buildCreatomateInlineSource = (payload) => {
 };
 const renderCreatomateJob = async (_req, job) => {
     const payload = (job.payload || {});
-    const source = String(payload?.style || '') === 'collage'
-        ? buildCollageInlineSource(payload)
-        : buildCreatomateInlineSource(payload);
+    const style = String(payload?.style || 'standard');
+    const source = style === 'collage' ? buildCollageInlineSource(payload)
+        : style === 'magazine' ? buildMagazineInlineSource(payload)
+            : style === 'minimal' ? buildMinimalInlineSource(payload)
+                : buildCreatomateInlineSource(payload);
     const bodyJson = JSON.stringify({ source });
     console.log('[pal-db] creatomate render request', {
         jobId: job.id,
@@ -1347,9 +1693,11 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
         if (!job)
             return res.status(404).json({ success: false, error: 'job not found' });
         const payload = (job.payload || {});
-        const source = String(payload?.style || '') === 'collage'
-            ? buildCollageInlineSource(payload)
-            : buildCreatomateInlineSource(payload);
+        const style = String(payload?.style || 'standard');
+        const source = style === 'collage' ? buildCollageInlineSource(payload)
+            : style === 'magazine' ? buildMagazineInlineSource(payload)
+                : style === 'minimal' ? buildMinimalInlineSource(payload)
+                    : buildCreatomateInlineSource(payload);
         const bodyJson = JSON.stringify({ source });
         // Creatomateへの実際送信テスト
         let creatomateStatus = null;

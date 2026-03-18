@@ -122,6 +122,35 @@ const getPublicBaseUrl = (req) => {
 };
 const CREATOMATE_API_URL = 'https://api.creatomate.com/v1/renders';
 const CREATOMATE_API_KEY = String(process.env.CREATOMATE_API_KEY || '').trim();
+/**
+ * Creatomate は非同期レンダリング (202 Accepted)。
+ * POST 直後の URL はまだファイルが存在しない "予約済みURL"。
+ * このヘルパーで status === 'succeeded' になるまでポーリングし、
+ * 実際にファイルが書き込まれた後の URL を返す。
+ */
+const pollCreatomateRender = async (renderId, maxWaitMs = 75000) => {
+    const deadline = Date.now() + maxWaitMs;
+    const intervalMs = 3000;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        try {
+            const res = await fetch(`${CREATOMATE_API_URL}/${renderId}`, {
+                headers: { Authorization: `Bearer ${CREATOMATE_API_KEY}` },
+                signal: AbortSignal.timeout(10000),
+            });
+            if (!res.ok)
+                break;
+            const item = (await res.json());
+            console.log('[pal-db] creatomate poll', { renderId, status: item.status });
+            if (item.status === 'succeeded' || item.status === 'failed')
+                return item;
+        }
+        catch (e) {
+            console.warn('[pal-db] creatomate poll error', e);
+        }
+    }
+    return null;
+};
 // Dimensions per destination (投稿先)
 const DESTINATION_DIMENSIONS = {
     instagram_reel: [1080, 1920],
@@ -699,7 +728,23 @@ const renderCreatomateJob = async (_req, job) => {
     }
     const renderItem = Array.isArray(data) ? data[0] : data;
     const renderId = String(renderItem?.id || '').trim();
-    const previewUrl = String(renderItem?.url || '').trim() || null;
+    // Creatomate は非同期。202 レスポンスの url はまだファイルが存在しない予約URL。
+    // ポーリングして succeeded になってから URL を取得する。
+    let finalItem = renderItem;
+    if (renderId && renderItem?.status !== 'succeeded') {
+        console.log('[pal-db] creatomate render queued, polling...', { renderId });
+        const polled = await pollCreatomateRender(renderId);
+        if (polled) {
+            finalItem = polled;
+            if (polled.status === 'failed') {
+                throw new Error(`Creatomate render failed: ${JSON.stringify(polled.error || polled.errorMessage || 'unknown')}`);
+            }
+        }
+        else {
+            console.warn('[pal-db] creatomate polling timeout, using initial url');
+        }
+    }
+    const previewUrl = String(finalItem?.url || '').trim() || null;
     const nextStatus = job.status === '承認済' ? job.status : '確認中';
     const updated = await upsertPalVideoJob({
         id: job.id,

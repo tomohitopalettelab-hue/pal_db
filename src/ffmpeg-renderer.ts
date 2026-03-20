@@ -2,11 +2,10 @@
  * FFmpeg-based video renderer — Creatomate の代替
  * 画像+テキスト+BGM を合成して MP4 を生成する
  */
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import { createWriteStream, createReadStream } from 'fs';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { promisify } from 'util';
 import { get as httpsGet } from 'https';
 import { get as httpGet } from 'http';
 import { IncomingMessage } from 'http';
@@ -17,7 +16,30 @@ const _ffmpegStaticPath: string | null = (() => {
   try { return _require('ffmpeg-static') as string | null; } catch { return null; }
 })();
 
-const execAsync = promisify(exec);
+// ─── FFmpeg runner (spawn, stdio:pipe for stderr only) ────────────────────────
+// exec のように stdout/stderr を丸ごとバッファしないため OOM を防ぐ
+const runFFmpeg = (bin: string, args: string[], timeoutMs = 600000): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const stderrChunks: Buffer[] = [];
+    const proc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    proc.stderr.on('data', (chunk: Buffer) => {
+      // stderr は最大 200KB だけ保持（デバッグ用）
+      if (stderrChunks.reduce((s, c) => s + c.length, 0) < 200 * 1024) {
+        stderrChunks.push(chunk);
+      }
+    });
+    const timer = setTimeout(() => { proc.kill('SIGKILL'); reject(new Error('FFmpeg timeout')); }, timeoutMs);
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+      } else {
+        const stderr = Buffer.concat(stderrChunks).toString('utf8').slice(0, 2000);
+        reject(new Error(`FFmpeg exit ${code}: ${stderr}`));
+      }
+    });
+    proc.on('error', (e) => { clearTimeout(timer); reject(e); });
+  });
 
 // 永続ディスク優先、なければ /tmp
 export const DATA_DIR = process.env.PAL_DB_MEDIA_DIR ? '/var/data/pal-video' : '/tmp/pal-video';
@@ -125,7 +147,7 @@ const getFFmpegBin = async (): Promise<string> => {
 
   // Try system ffmpeg first
   try {
-    await execAsync('which ffmpeg');
+    await runFFmpeg('ffmpeg', ['-version'], 5000);
     _ffmpegBin = 'ffmpeg';
     return 'ffmpeg';
   } catch {}
@@ -308,7 +330,7 @@ const renderClip = async (
   const pw = w;
   const ph = h;
 
-  let inputPart: string;
+  let inputArgs: string[];
   let vfBase: string;
   let hasImage = false;
 
@@ -325,21 +347,21 @@ const renderClip = async (
       hasImage = true;
       if (preview) {
         // プレビュー: シンプルscale（メモリ節約）
-        inputPart = `-loop 1 -t ${dur} -i "${imgPath}"`;
+        inputArgs = ['-loop', '1', '-t', String(dur), '-i', imgPath];
         vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},setpts=PTS-STARTPTS`;
       } else {
         // 最終: Ken Burns バリエーション（5種類をローテーション）
-        inputPart = `-loop 1 -t ${dur + 1} -i "${imgPath}"`;
+        inputArgs = ['-loop', '1', '-t', String(dur + 1), '-i', imgPath];
         vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
                  `${getBurnsFilter(index, frames, pw, ph)},` +
                  `trim=duration=${dur},setpts=PTS-STARTPTS`;
       }
     } else {
-      inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30"`;
+      inputArgs = ['-f', 'lavfi', '-t', String(dur), '-i', `color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30`];
       vfBase = `[0:v]format=yuv420p`;
     }
   } else {
-    inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30"`;
+    inputArgs = ['-f', 'lavfi', '-t', String(dur), '-i', `color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30`];
     vfBase = `[0:v]format=yuv420p`;
   }
 
@@ -350,8 +372,7 @@ const renderClip = async (
   const filterChain = [
     vfBase,
     ...(colorGrade ? [colorGrade] : []),
-    // ビネット（周辺暗化）: 最終・画像ありのみ
-    ...(hasImage && !preview ? ['vignette=angle=PI/6'] : []),
+    ...(hasImage && !preview ? ['vignette=angle=0.52'] : []),
     ...(overlay ? [overlay] : []),
     `format=yuv420p`,
     `fade=t=in:st=0:d=${fadeDur}`,
@@ -360,11 +381,16 @@ const renderClip = async (
 
   const preset = preview ? 'veryfast' : 'fast';
   const crf    = preview ? 26 : 20;
-  const cmd = `"${ffmpeg}" -y -loglevel error ${inputPart} -filter_complex "${filterChain.join(',')}" ` +
-    `-c:v libx264 -preset ${preset} -crf ${crf} -r 30 -threads 2 -an "${clipPath}"`;
 
-  console.log(`[ffmpeg] clip ${index} cmd:`, cmd.slice(0, 200));
-  await execAsync(cmd, { timeout: 600000, maxBuffer: 50 * 1024 * 1024 });
+  console.log(`[ffmpeg] clip ${index} (${pw}x${ph}, preview=${preview})`);
+  await runFFmpeg(ffmpeg, [
+    '-y', '-loglevel', 'error',
+    ...inputArgs,
+    '-filter_complex', filterChain.join(','),
+    '-c:v', 'libx264', '-preset', preset,
+    '-crf', String(crf), '-r', '30', '-threads', '2', '-an',
+    clipPath,
+  ]);
   return clipPath;
 };
 
@@ -452,8 +478,12 @@ export const renderWithFFmpeg = async (
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concat demuxer (preview)…');
     // -c copy はタイムスタンプがズレるため再エンコード（ultrafast で高速）
-    const cmd = `"${ffmpeg}" -y -loglevel error -f concat -safe 0 -i "${listPath}" -c:v libx264 -preset ultrafast -crf 26 -r 30 -threads 2 -an "${concatPath}"`;
-    await execAsync(cmd, { timeout: 120000, maxBuffer: 50 * 1024 * 1024 });
+    await runFFmpeg(ffmpeg, [
+      '-y', '-loglevel', 'error',
+      '-f', 'concat', '-safe', '0', '-i', listPath,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-r', '30', '-threads', '2', '-an',
+      concatPath,
+    ], 120000);
     await fs.unlink(listPath).catch(() => {});
   } else {
     // 最終: xfade トランジション付き結合
@@ -473,13 +503,17 @@ export const renderWithFFmpeg = async (
       currentStream = outLabel;
     }
 
-    const cmd = `"${ffmpeg}" -y -loglevel error ${inputArgs} ` +
-      `-filter_complex "${filterParts.replace(/;$/, '')}" -map "[vout]" ` +
-      `-c:v libx264 -preset fast -crf 20 -r 30 -threads 2 -an "${concatPath}"`;
+    const inputArgsList = clipPaths.flatMap(p => ['-i', p]);
 
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concatenating with xfade…');
-    await execAsync(cmd, { timeout: 300000, maxBuffer: 50 * 1024 * 1024 });
+    await runFFmpeg(ffmpeg, [
+      '-y', '-loglevel', 'error',
+      ...inputArgsList,
+      '-filter_complex', filterParts.replace(/;$/, ''), '-map', '[vout]',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '2', '-an',
+      concatPath,
+    ], 300000);
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────
@@ -493,13 +527,16 @@ export const renderWithFFmpeg = async (
       const totalDur = rawCuts.reduce((a, c) => a + c.duration, 0) - TRANS_DUR * (rawCuts.length - 1);
       const fadeStart = Math.max(0, totalDur - 1.5);
 
-      const cmd = `"${ffmpeg}" -y -i "${concatPath}" -i "${bgmPath}" ` +
-        `-filter_complex "[1:a]atrim=0:${totalDur.toFixed(3)},asetpts=PTS-STARTPTS,` +
-        `afade=t=out:st=${fadeStart.toFixed(3)}:d=1.5,volume=0.65[a]" ` +
-        `-map 0:v -map "[a]" -c:v copy -c:a aac -b:a 128k -shortest "${outputPath}"`;
-
       console.log('[ffmpeg] adding BGM…');
-      await execAsync(cmd, { timeout: 60000, maxBuffer: 50 * 1024 * 1024 });
+      await runFFmpeg(ffmpeg, [
+        '-y', '-loglevel', 'error',
+        '-i', concatPath, '-i', bgmPath,
+        '-filter_complex',
+        `[1:a]atrim=0:${totalDur.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(3)}:d=1.5,volume=0.65[a]`,
+        '-map', '0:v', '-map', '[a]',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest',
+        outputPath,
+      ], 60000);
     } catch (e) {
       console.warn('[ffmpeg] BGM failed, using video-only:', (e as Error).message);
       await fs.copyFile(concatPath, outputPath);

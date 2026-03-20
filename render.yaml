@@ -3,7 +3,7 @@ services:
     name: pal-db
     env: node
     plan: starter
-    buildCommand: npm install ; npm run build
+    buildCommand: apt-get update && apt-get install -y fonts-noto-cjk ffmpeg ; npm install ; npm run build
     startCommand: npm run start
     envVars:
       - key: PAL_DB_MEDIA_DIR

@@ -19,15 +19,22 @@ const _ffmpegStaticPath: string | null = (() => {
 
 const execAsync = promisify(exec);
 
-const TMP = '/tmp/pal-video';
+// 永続ディスク優先、なければ /tmp
+const DATA_DIR = process.env.PAL_DB_MEDIA_DIR ? '/var/data/pal-video' : '/tmp/pal-video';
+const TMP = DATA_DIR;
 const FONT_PATH = `${TMP}/NotoSansJP-Bold.ttf`;
 
-// jsDelivr CDN from Google Fonts repo — stable direct URL
-const FONT_CDN = 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosansjp/static/NotoSansJP-Bold.ttf';
+// フォントダウンロード フォールバック URL (GitHub raw — より信頼性高)
+const FONT_CDN_URLS = [
+  'https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/static/NotoSansJP-Bold.ttf',
+  'https://github.com/google/fonts/raw/main/ofl/notosansjp/static/NotoSansJP-Bold.ttf',
+];
 
-// System font candidates (Render.com / Ubuntu)
+// System font candidates (Render.com Ubuntu: apt install fonts-noto-cjk)
 const SYSTEM_FONTS = [
+  '/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf',
   '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
+  '/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf',
   '/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc',
   '/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc',
 ];
@@ -108,11 +115,18 @@ export const ensureFont = async (): Promise<string> => {
     return FONT_PATH;
   } catch {}
 
-  console.log('[ffmpeg] downloading Noto Sans JP font…');
   await fs.mkdir(TMP, { recursive: true });
-  await downloadFile(FONT_CDN, FONT_PATH);
-  _fontPath = FONT_PATH;
-  return FONT_PATH;
+  for (const url of FONT_CDN_URLS) {
+    try {
+      console.log(`[ffmpeg] downloading font from ${url}…`);
+      await downloadFile(url, FONT_PATH);
+      _fontPath = FONT_PATH;
+      return FONT_PATH;
+    } catch (e) {
+      console.warn(`[ffmpeg] font download failed (${url}):`, (e as Error).message);
+    }
+  }
+  throw new Error('Noto Sans JP フォントのダウンロードに失敗しました。Render.com のビルドコマンドに apt-get install fonts-noto-cjk を追加してください。');
 };
 
 // ─── FFmpeg binary ────────────────────────────────────────────────────────────

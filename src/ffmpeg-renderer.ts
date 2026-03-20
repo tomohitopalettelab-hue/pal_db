@@ -158,60 +158,123 @@ const xfadeOf = (transition: string, idx: number): string => {
   return map[transition] || 'fade';
 };
 
+// ─── Ken Burns バリエーション（カットごとに変化） ────────────────────────────
+
+const getBurnsFilter = (index: number, frames: number, w: number, h: number): string => {
+  switch (index % 5) {
+    case 0: // ズームイン（中央）
+      return `zoompan=z='min(zoom+0.0012,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
+    case 1: // ズームアウト（中央）
+      return `zoompan=z='if(eq(on,1),1.08,max(zoom-0.001,1.01))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
+    case 2: // 左→右パン
+      return `zoompan=z='1.06':x='(iw-iw/zoom)*on/${frames}':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
+    case 3: // 右→左パン
+      return `zoompan=z='1.06':x='(iw-iw/zoom)*(1-on/${frames})':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
+    case 4: // 斜めズームイン（左上起点）
+      return `zoompan=z='min(zoom+0.001,1.07)':x='(iw-iw/zoom)*on/(${frames}*2)':y='(ih-ih/zoom)*on/(${frames}*2)':d=${frames}:s=${w}x${h}:fps=30`;
+    default:
+      return `zoompan=z='min(zoom+0.0012,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
+  }
+};
+
+// ─── スタイル別カラーグレーディング ─────────────────────────────────────────
+
+const getColorGrade = (style: string): string => {
+  switch (style) {
+    case 'magazine':
+      // 高コントラスト・彩度高め・ウォームトーン
+      return 'eq=contrast=1.18:brightness=0.02:saturation=1.35,colorchannelmixer=rr=1.06:gg=1.0:bb=0.92';
+    case 'minimal':
+      // 低彩度・明るめ・クリーン
+      return 'eq=contrast=0.95:brightness=0.06:saturation=0.75';
+    case 'gradient':
+      // 深みのある色・青みがかったクール
+      return 'eq=contrast=1.2:brightness=-0.02:saturation=1.3,colorchannelmixer=rr=0.95:gg=0.98:bb=1.08';
+    case 'collage':
+      // ビビッド・鮮やか
+      return 'eq=contrast=1.12:brightness=0.0:saturation=1.45';
+    default: // standard
+      return 'eq=contrast=1.08:brightness=0.01:saturation=1.15';
+  }
+};
+
 // ─── Shape + Text overlay filter ─────────────────────────────────────────────
 
 const overlayFilter = (
   mainText: string, subText: string,
   layout: string, w: number, h: number, font: string,
-  colorAccent: string, dur: number,
+  colorAccent: string, dur: number, cutIndex: number,
 ): string => {
   const isPortrait = h > w;
   const mSize  = Math.round(h * (isPortrait ? 0.036 : 0.042));
   const sSize  = Math.round(h * (isPortrait ? 0.021 : 0.025));
   const margin = Math.round(h * (isPortrait ? 0.065 : 0.055));
   const bandH  = Math.round(h * (isPortrait ? 0.27 : 0.23));
-  const fadeIn = Math.min(0.6, dur * 0.15).toFixed(2); // テキストフェードイン秒
+  const fadeIn = Math.min(0.6, dur * 0.15).toFixed(2);
+  const slide  = Math.round(h * 0.035); // スライド量（px）
   const accent = colorAccent.replace('#', '');
 
   const atTop    = layout === 'top' || layout === 'billboard';
   const atCenter = layout === 'center';
 
-  const mY = atTop    ? `${margin}`
-           : atCenter ? `(h-text_h)/2${subText ? `-${Math.round(mSize / 2 + 8)}` : ''}`
-           :            `h-${margin + (subText ? mSize + sSize + 14 : mSize)}`;
-  const sY = atTop    ? `${margin + mSize + 10}`
-           : atCenter ? `(h+text_h)/2${mainText ? `+8` : ''}`
-           :            `h-${margin + sSize}`;
+  // 数値で Y 位置を計算（スライドアニメーション用）
+  const mYpx = atTop
+    ? margin
+    : atCenter
+    ? Math.round(h / 2) - (subText ? Math.round(mSize / 2) + 8 : Math.round(mSize / 2))
+    : h - margin - (subText ? mSize + sSize + 14 : mSize);
+  const sYpx = atTop
+    ? margin + mSize + 10
+    : atCenter
+    ? Math.round(h / 2) + (mainText ? 8 : 0)
+    : h - margin - sSize;
+
+  // スライド方向: top は上から、それ以外は下から
+  const dir = atTop ? -1 : 1;
+  const mYanim = `'if(lt(t,${fadeIn}),${mYpx}+${dir * slide}*(1-t/${fadeIn}),${mYpx})'`;
+  const sYanim = `'if(lt(t,${fadeIn}),${sYpx}+${dir * slide}*(1-t/${fadeIn}),${sYpx})'`;
 
   const parts: string[] = [];
 
-  // ── シェイプ: テキスト背景バンド + アクセントライン ──────────
+  // ── シェイプ: レイアウト別に異なるデザイン ────────────────────
   if (atTop) {
-    parts.push(`drawbox=x=0:y=0:w=iw:h=${bandH}:color=0x000000@0.55:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandH - 3}:w=iw:h=3:color=0x${accent}@0.9:t=fill`);
+    // グラデーション風の上部バンド（2段重ね）
+    parts.push(`drawbox=x=0:y=0:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
+    parts.push(`drawbox=x=0:y=0:w=iw:h=${Math.round(bandH * 0.5)}:color=0x000000@0.2:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandH - 3}:w=iw:h=3:color=0x${accent}@0.95:t=fill`);
+    // 左端縦ライン
+    parts.push(`drawbox=x=0:y=0:w=4:h=${bandH}:color=0x${accent}@0.95:t=fill`);
   } else if (atCenter) {
+    // 中央バンド + 両サイドライン
     const bandY = Math.round(h / 2 - bandH / 2);
-    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.55:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandY}:w=4:h=${bandH}:color=0x${accent}@0.9:t=fill`);
-    parts.push(`drawbox=x=iw-4:y=${bandY}:w=4:h=${bandH}:color=0x${accent}@0.9:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.95:t=fill`);
+    parts.push(`drawbox=x=iw-5:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.95:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY - 1}:w=iw:h=2:color=0x${accent}@0.5:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY + bandH}:w=iw:h=2:color=0x${accent}@0.5:t=fill`);
   } else {
-    // bottom
+    // 下部バンド: グラデーション風（濃淡2段）+ トップライン
     const bandY = h - bandH;
-    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.55:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=3:color=0x${accent}@0.9:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY + Math.round(bandH * 0.5)}:w=iw:h=${Math.round(bandH * 0.5)}:color=0x000000@0.2:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=3:color=0x${accent}@0.95:t=fill`);
+    // カット番号によって右端装飾を変える
+    if (cutIndex % 2 === 0) {
+      parts.push(`drawbox=x=iw-5:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.5:t=fill`);
+    }
   }
 
-  // ── テキスト: フェードイン + シャドウ ────────────────────────
   if (!mainText && !subText) return parts.join(',');
 
-  const shadow = 'shadowcolor=black@0.75:shadowx=2:shadowy=2';
-  const alpha  = `'min(t/${fadeIn},1)'`;
+  // ── テキスト: スライドイン + フェードイン ────────────────────
+  const shadow = 'shadowcolor=black@0.8:shadowx=2:shadowy=2';
+  const alpha  = `'if(lt(t,${fadeIn}),t/${fadeIn},1)'`;
 
   if (mainText) parts.push(
-    `drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=(w-text_w)/2:y=${mY}:${shadow}:alpha=${alpha}`
+    `drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=(w-text_w)/2:y=${mYanim}:${shadow}:alpha=${alpha}`
   );
   if (subText) parts.push(
-    `drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.88:x=(w-text_w)/2:y=${sY}:${shadow}:alpha=${alpha}`
+    `drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.9:x=(w-text_w)/2:y=${sYanim}:${shadow}:alpha=${alpha}`
   );
   return parts.join(',');
 };
@@ -234,6 +297,7 @@ const renderClip = async (
   colorPrimary: string, colorAccent: string,
   font: string, ffmpeg: string,
   preview = false,
+  style = 'standard',
 ): Promise<string> => {
   const dur = cut.duration;
   const frames = Math.ceil(dur * 30);
@@ -246,6 +310,7 @@ const renderClip = async (
 
   let inputPart: string;
   let vfBase: string;
+  let hasImage = false;
 
   if (cut.imageUrl) {
     const imgPath = `${TMP}/${jobId}_img_${index}.jpg`;
@@ -257,16 +322,16 @@ const renderClip = async (
     }
 
     if (cut.imageUrl) {
+      hasImage = true;
       if (preview) {
-        // プレビュー: シンプルscale（zoompanはメモリ大量消費のため省略）
+        // プレビュー: シンプルscale（メモリ節約）
         inputPart = `-loop 1 -t ${dur} -i "${imgPath}"`;
         vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},setpts=PTS-STARTPTS`;
       } else {
-        // 最終: Ken Burns ゆっくりズームイン（高品質）
-        const zoom = `min(zoom+0.0012,1.08)`;
+        // 最終: Ken Burns バリエーション（5種類をローテーション）
         inputPart = `-loop 1 -t ${dur + 1} -i "${imgPath}"`;
         vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
-                 `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${pw}x${ph}:fps=30,` +
+                 `${getBurnsFilter(index, frames, pw, ph)},` +
                  `trim=duration=${dur},setpts=PTS-STARTPTS`;
       }
     } else {
@@ -278,19 +343,24 @@ const renderClip = async (
     vfBase = `[0:v]format=yuv420p`;
   }
 
-  const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, dur);
+  const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, dur, index);
+  const colorGrade = hasImage && !preview ? getColorGrade(style) : '';
   const fadeOut = dur - fadeDur;
-  const filters = [
+
+  const filterChain = [
     vfBase,
+    ...(colorGrade ? [colorGrade] : []),
+    // ビネット（周辺暗化）: 最終・画像ありのみ
+    ...(hasImage && !preview ? ['vignette=angle=PI/6'] : []),
     ...(overlay ? [overlay] : []),
     `format=yuv420p`,
     `fade=t=in:st=0:d=${fadeDur}`,
     `fade=t=out:st=${fadeOut}:d=${fadeDur}`,
-  ].join(',');
+  ];
 
   const preset = preview ? 'veryfast' : 'fast';
   const crf    = preview ? 26 : 20;
-  const cmd = `"${ffmpeg}" -y ${inputPart} -filter_complex "${filters}" ` +
+  const cmd = `"${ffmpeg}" -y ${inputPart} -filter_complex "${filterChain.join(',')}" ` +
     `-c:v libx264 -preset ${preset} -crf ${crf} -r 30 -an "${clipPath}"`;
 
   await execAsync(cmd, { timeout: 600000 });
@@ -324,6 +394,7 @@ export const renderWithFFmpeg = async (
   const h = preview ? Math.round(fh / 2) : fh;
   const colorPrimary = String(payload?.colorPrimary || '#1A1A2E');
   const colorAccent  = String(payload?.colorAccent  || '#E95464');
+  const style        = String(payload?.style         || 'standard');
   const bgmKey       = String(payload?.bgm           || '');
   const bgmUrl       = bgmKey.startsWith('http') ? bgmKey : (BGM_URLS[bgmKey] || '');
 
@@ -359,7 +430,7 @@ export const renderWithFFmpeg = async (
   for (let i = 0; i < rawCuts.length; i++) {
     console.log(`[ffmpeg] cut ${i + 1}/${total}…`);
     await onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
-    const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg, preview);
+    const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg, preview, style);
     clipPaths.push(p);
     await onProgress?.({ step: 'clip', current: i + 1, total, label: `カット ${i + 1} / ${total} 完了` });
   }

@@ -27,8 +27,8 @@ const TMP = DATA_DIR;
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname_ts = path.dirname(__filename);
-// dist/ffmpeg-renderer.js → ../../fonts/NotoSansJP-Bold.otf
-const BUNDLED_FONT = path.resolve(__dirname_ts, '../../fonts/NotoSansJP-Bold.otf');
+// dist/ffmpeg-renderer.js → ../fonts/NotoSansJP-Bold.otf (distの一つ上 = プロジェクトルート)
+const BUNDLED_FONT = path.resolve(__dirname_ts, '../fonts/NotoSansJP-Bold.otf');
 
 // System font candidates (Render.com Ubuntu: apt install fonts-noto-cjk)
 const SYSTEM_FONTS = [

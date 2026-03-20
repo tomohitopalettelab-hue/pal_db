@@ -10,6 +10,12 @@ import { promisify } from 'util';
 import { get as httpsGet } from 'https';
 import { get as httpGet } from 'http';
 import { IncomingMessage } from 'http';
+import { createRequire } from 'module';
+
+const _require = createRequire(import.meta.url);
+const _ffmpegStaticPath: string | null = (() => {
+  try { return _require('ffmpeg-static') as string | null; } catch { return null; }
+})();
 
 const execAsync = promisify(exec);
 
@@ -124,11 +130,7 @@ const getFFmpegBin = async (): Promise<string> => {
   } catch {}
 
   // Fall back to ffmpeg-static
-  try {
-    const mod = await import('ffmpeg-static');
-    const p = (mod.default ?? mod) as unknown as string | null;
-    if (p) { _ffmpegBin = p; return p; }
-  } catch {}
+  if (_ffmpegStaticPath) { _ffmpegBin = _ffmpegStaticPath; return _ffmpegStaticPath; }
 
   _ffmpegBin = 'ffmpeg';
   return 'ffmpeg';

@@ -234,12 +234,18 @@ const renderClip = async (
     }
 
     if (cut.imageUrl) {
-      // Ken Burns: ゆっくりズームイン（プレビューも最終も同じ動き、解像度のみ異なる）
-      const zoom = `min(zoom+0.0012,1.08)`;
-      inputPart = `-loop 1 -t ${dur + 1} -i "${imgPath}"`;
-      vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
-               `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${pw}x${ph}:fps=30,` +
-               `trim=duration=${dur},setpts=PTS-STARTPTS`;
+      if (preview) {
+        // プレビュー: シンプルscale（zoompanはメモリ大量消費のため省略）
+        inputPart = `-loop 1 -t ${dur} -i "${imgPath}"`;
+        vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},setpts=PTS-STARTPTS`;
+      } else {
+        // 最終: Ken Burns ゆっくりズームイン（高品質）
+        const zoom = `min(zoom+0.0012,1.08)`;
+        inputPart = `-loop 1 -t ${dur + 1} -i "${imgPath}"`;
+        vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
+                 `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${pw}x${ph}:fps=30,` +
+                 `trim=duration=${dur},setpts=PTS-STARTPTS`;
+      }
     } else {
       inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30"`;
       vfBase = `[0:v]format=yuv420p`;

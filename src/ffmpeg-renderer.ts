@@ -258,7 +258,7 @@ const renderClip = async (
   const cmd = `"${ffmpeg}" -y ${inputPart} -filter_complex "${filters}" ` +
     `-c:v libx264 -preset fast -crf 20 -r 30 -an "${clipPath}"`;
 
-  await execAsync(cmd, { timeout: 90000 });
+  await execAsync(cmd, { timeout: 600000 });
   return clipPath;
 };
 
@@ -274,7 +274,7 @@ export type RenderProgress = {
 export const renderWithFFmpeg = async (
   payload: Record<string, unknown>,
   jobId: string,
-  onProgress?: (p: RenderProgress) => void,
+  onProgress?: (p: RenderProgress) => Promise<void> | void,
 ): Promise<string> => {
   await fs.mkdir(TMP, { recursive: true });
 
@@ -307,10 +307,10 @@ export const renderWithFFmpeg = async (
   const clipPaths: string[] = [];
   for (let i = 0; i < rawCuts.length; i++) {
     console.log(`[ffmpeg] cut ${i + 1}/${total}…`);
-    onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
+    await onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
     const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg);
     clipPaths.push(p);
-    onProgress?.({ step: 'clip', current: i + 1, total, label: `カット ${i + 1} / ${total} 完了` });
+    await onProgress?.({ step: 'clip', current: i + 1, total, label: `カット ${i + 1} / ${total} 完了` });
   }
 
   // ── 2. Concat with xfade transitions ──────────────────────────────────────
@@ -340,9 +340,9 @@ export const renderWithFFmpeg = async (
       `-filter_complex "${filterParts.replace(/;$/, '')}" -map "[vout]" ` +
       `-c:v libx264 -preset fast -crf 20 -r 30 -an "${concatPath}"`;
 
-    onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
+    await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concatenating…');
-    await execAsync(cmd, { timeout: 180000 });
+    await execAsync(cmd, { timeout: 300000 });
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────
@@ -351,7 +351,7 @@ export const renderWithFFmpeg = async (
   if (bgmUrl) {
     const bgmPath = `${TMP}/${jobId}_bgm.mp3`;
     try {
-      onProgress?.({ step: 'bgm', current: total, total, label: 'BGMを追加中...' });
+      await onProgress?.({ step: 'bgm', current: total, total, label: 'BGMを追加中...' });
       await downloadFile(bgmUrl, bgmPath);
       const totalDur = rawCuts.reduce((a, c) => a + c.duration, 0) - TRANS_DUR * (rawCuts.length - 1);
       const fadeStart = Math.max(0, totalDur - 1.5);

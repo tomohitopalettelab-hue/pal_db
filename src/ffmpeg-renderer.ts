@@ -239,20 +239,25 @@ const overlayFilter = (
   const atTop    = layout === 'top' || layout === 'billboard';
   const atCenter = layout === 'center';
 
-  // テキスト間の行間（CJKフォントは実描画高さが fontsize より大きいため余裕を持たせる）
-  const lineGap = Math.round(mSize * 0.55); // メインフォントサイズの55%
+  // NotoSansCJK の実描画高さは fontsize の約1.45倍（ascender+descender込み）
+  // Y座標計算ではこの実高さを使わないと重なりが発生する
+  const CJK = 1.45;
+  const mActH = Math.round(mSize * CJK);  // メインテキスト実描画高さ
+  const sActH = Math.round(sSize * CJK);  // サブテキスト実描画高さ
+  const lineGap = Math.round(mSize * 0.35); // テキスト間の追加余白
 
   // 数値で Y 位置を計算（スライドアニメーション用）
+  // ※ drawtext の y= はバウンディングボックス上端座標
   const mYpx = atTop
     ? margin
     : atCenter
-    ? Math.round(h / 2) - Math.round((mSize + (subText ? lineGap + sSize : 0)) / 2)
-    : h - margin - (subText ? sSize + lineGap + mSize : mSize);
+    ? Math.round(h / 2) - Math.round((mActH + (subText ? lineGap + sActH : 0)) / 2)
+    : h - margin - (subText ? sActH + lineGap + mActH : mActH);
   const sYpx = atTop
-    ? margin + mSize + lineGap
+    ? margin + mActH + lineGap
     : atCenter
-    ? Math.round(h / 2) + Math.round((mSize + (mainText ? lineGap : 0)) / 2) - Math.round(sSize / 2)
-    : h - margin - sSize;
+    ? Math.round(h / 2) + Math.round((mActH + (mainText ? lineGap : 0)) / 2) - Math.round(sActH / 2)
+    : h - margin - sActH;
 
   // スライド方向: top は上から、それ以外は下から
   const dir = atTop ? -1 : 1;

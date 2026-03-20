@@ -491,6 +491,7 @@ export const renderWithFFmpeg = async (
       '-y', '-loglevel', 'error',
       '-f', 'concat', '-safe', '0', '-i', listPath,
       '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-r', '30', '-threads', '2', '-an',
+      '-movflags', '+faststart',
       concatPath,
     ], 120000);
     await fs.unlink(listPath).catch(() => {});
@@ -521,6 +522,7 @@ export const renderWithFFmpeg = async (
       ...inputArgsList,
       '-filter_complex', filterParts.replace(/;$/, ''), '-map', '[vout]',
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '2', '-an',
+      '-movflags', '+faststart',
       concatPath,
     ], 300000);
   }
@@ -544,6 +546,7 @@ export const renderWithFFmpeg = async (
         `[1:a]atrim=0:${totalDur.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(3)}:d=1.5,volume=0.65[a]`,
         '-map', '0:v', '-map', '[a]',
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest',
+        '-movflags', '+faststart',
         outputPath,
       ], 60000);
     } catch (e) {

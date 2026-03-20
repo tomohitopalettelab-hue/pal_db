@@ -485,8 +485,8 @@ const buildCollageInlineSource = (payload: Record<string, unknown>) => {
 
   const scenes = rawCuts.map((cut: any, i: number) => {
     const dur      = Number(cut.duration || cut.durationSec || 9);
-    const mainText = String(cut.mainText || '');
-    const subText  = String(cut.subText  || '');
+    const mainText = String(cut.mainText || cut.title || cut.textMain || '');
+    const subText  = String(cut.subText  || cut.subtitle || cut.textSub || '');
     const caption  = String(cut.caption  || '');
     const rawImgs  = Array.isArray(cut.images) ? cut.images : cut.imageUrl ? [cut.imageUrl] : [];
     const imgs     = rawImgs.map((u: any) => String(u || '')).filter((u: string) => u.startsWith('http'));
@@ -661,8 +661,8 @@ const buildMagazineInlineSource = (payload: Record<string, unknown>) => {
 
   const scenes = rawCuts.slice(0, 7).map((cut: any, i: number) => {
     const dur       = Number(cut.duration || cut.durationSec || 5);
-    const mainText  = String(cut.mainText || '');
-    const subText   = String(cut.subText  || '');
+    const mainText  = String(cut.mainText || cut.title || cut.textMain || '');
+    const subText   = String(cut.subText  || cut.subtitle || cut.textSub || '');
     const imgUrl    = String(cut.imageUrl || '').trim();
     const hasImg    = imgUrl.startsWith('http');
     const isLeft    = i % 2 === 0; // alternate panel side each scene
@@ -826,8 +826,8 @@ const buildMinimalInlineSource = (payload: Record<string, unknown>) => {
 
   const scenes = rawCuts.slice(0, 7).map((cut: any, i: number) => {
     const dur      = Number(cut.duration || cut.durationSec || 5);
-    const mainText = String(cut.mainText || '');
-    const subText  = String(cut.subText  || '');
+    const mainText = String(cut.mainText || cut.title || cut.textMain || '');
+    const subText  = String(cut.subText  || cut.subtitle || cut.textSub || '');
     const imgUrl   = String(cut.imageUrl || '').trim();
     const hasImg   = imgUrl.startsWith('http');
     const timeStart = rawCuts.slice(0, i).reduce((acc: number, c: any) => acc + Number(c.duration || 5), 0);

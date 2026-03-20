@@ -2033,7 +2033,7 @@ app.post('/api/pal-video/debug-source', async (req: Request, res: Response) => {
     const source = style === 'collage'  ? buildCollageInlineSource(payload)
       : style === 'magazine' ? buildMagazineInlineSource(payload)
       : style === 'gradient' ? buildGradientInlineSource(payload)
-    : style === 'minimal'  ? buildMinimalInlineSource(payload)
+      : style === 'minimal'  ? buildMinimalInlineSource(payload)
       : buildCreatomateInlineSource(payload);
     const bodyJson = JSON.stringify({ source });
 

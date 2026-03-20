@@ -2419,23 +2419,20 @@ app.delete('/api/pal-opt-posts/:id', async (req: Request, res: Response) => {
 app.listen(port, async () => {
   try {
     await ensureTables();
-    // サーバー再起動時: 前回レンダリング中だったジョブをエラーに更新
+    // サーバー再起動時: 前回レンダリング中だったジョブを draft に戻す
+    // （エラーにせず再レンダリング可能な状態にする）
     try {
       const { sql } = await import('@vercel/postgres');
       const stuck = await sql`
         UPDATE pal_video_jobs
-        SET status = 'エラー',
-            payload = jsonb_set(
-              COALESCE(payload, '{}'::jsonb),
-              '{renderError}',
-              '"サーバー再起動により中断されました。再度レンダリングしてください。"'
-            ),
+        SET status = 'draft',
+            payload = payload - 'renderProgress' - 'renderError',
             updated_at = NOW()
         WHERE status = 'レンダリング中'
         RETURNING id
       `;
       if (stuck.rowCount && stuck.rowCount > 0) {
-        console.log(`[pal-db] marked ${stuck.rowCount} stuck rendering job(s) as error`);
+        console.log(`[pal-db] reset ${stuck.rowCount} interrupted rendering job(s) to draft — ready to re-render`);
       }
     } catch (e) {
       console.warn('[pal-db] startup cleanup warning:', e);

@@ -181,49 +181,50 @@ const xfadeOf = (transition: string, idx: number): string => {
   return map[transition] || 'fade';
 };
 
-// ─── Ken Burns バリエーション — zoompan フリー実装 ───────────────────────────
+// ─── Ken Burns バリエーション — overlay ベース実装 ───────────────────────────
 //
-// zoompan は d フレーム分をメモリにバッファするため OOM の主因になる。
-// scale(1.06x) + crop(eval=frame) に置き換えることで、
-// フレームバッファは常に 2〜3 枚のみ（≈18MB）に抑えられる。
+// crop の eval=frame は古い FFmpeg ビルドで "Option not found" になる。
+// overlay フィルターは x,y を常に per-frame で評価（t = タイムスタンプ秒）
+// するため、eval オプション不要で全バージョンで動作する。
 //
-// 動き: pre-scale した大きめ画像を 1 フレームずつクロップ位置を動かすことで
-// カメラパン・ドリーのような視覚効果を得る。
+// 手法:
+//   1. 画像を 1.07× にスケールしパン余白を確保
+//   2. 黒キャンバス [0] の上に画像 [1] をオーバーレイ
+//   3. overlay の x,y 式に t を使ってカメラパンを表現
 //
-const getBurnsFilter = (index: number, frames: number, w: number, h: number): string => {
-  // 1.07 倍にスケールしてパン余白を作る（7% = ~76px @ 1080px）
+const getBurnsFilter = (
+  index: number, dur: number, w: number, h: number,
+): { sw: number; sh: number; xExpr: string; yExpr: string } => {
   const ZOOM = 1.07;
-  const sw = Math.round(w * ZOOM); // スケール後幅
-  const sh = Math.round(h * ZOOM); // スケール後高さ
-  const dx = sw - w;               // 横方向パン可能量 (px)
-  const dy = sh - h;               // 縦方向パン可能量 (px)
-  const cx = Math.round(dx / 2);   // 中央X オフセット
-  const cy = Math.round(dy / 2);   // 中央Y オフセット
-  const f  = frames;
+  const sw = Math.round(w * ZOOM);     // スケール後幅
+  const sh = Math.round(h * ZOOM);     // スケール後高さ
+  const dx = sw - w;                   // 横パン可能量 (px)
+  const dy = sh - h;                   // 縦パン可能量 (px)
+  const cx = Math.round(dx / 2);       // 中央X オフセット
+  const cy = Math.round(dy / 2);       // 中央Y オフセット
+  const d  = (dur + 0.5).toFixed(3);  // 分母に使う秒数（少し大きめにしてオーバーランを防ぐ）
+
+  // overlay の x,y はキャンバス上の画像左上座標
+  // 負値 = 画像をキャンバス外にシフト → 別の領域が見える（パン効果）
+  let xExpr: string;
+  let yExpr: string;
 
   switch (index % 6) {
-    case 0: // 左上→右下ドリー（ズームイン風）
-      return `scale=${sw}:${sh}:flags=lanczos,` +
-             `crop=w=${w}:h=${h}:x='${dx}*n/${f}':y='${dy}*n/${f}':eval=frame`;
-    case 1: // 右下→左上ドリー（ズームアウト風）
-      return `scale=${sw}:${sh}:flags=lanczos,` +
-             `crop=w=${w}:h=${h}:x='${dx}*(1-n/${f})':y='${dy}*(1-n/${f})':eval=frame`;
+    case 0: // 左上→右下ドリー（左上端から右下端へ）
+      xExpr = `floor(-${dx}*t/${d})`; yExpr = `floor(-${dy}*t/${d})`; break;
+    case 1: // 右下→左上ドリー（右下端から左上端へ）
+      xExpr = `floor(-${dx}*(1-t/${d}))`; yExpr = `floor(-${dy}*(1-t/${d}))`; break;
     case 2: // 左→右パン（Y 中央固定）
-      return `scale=${sw}:${sh}:flags=lanczos,` +
-             `crop=w=${w}:h=${h}:x='${dx}*n/${f}':y=${cy}:eval=frame`;
+      xExpr = `floor(-${dx}*t/${d})`; yExpr = String(-cy); break;
     case 3: // 右→左パン（Y 中央固定）
-      return `scale=${sw}:${sh}:flags=lanczos,` +
-             `crop=w=${w}:h=${h}:x='${dx}*(1-n/${f})':y=${cy}:eval=frame`;
+      xExpr = `floor(-${dx}*(1-t/${d}))`; yExpr = String(-cy); break;
     case 4: // 上→下パン（X 中央固定）
-      return `scale=${sw}:${sh}:flags=lanczos,` +
-             `crop=w=${w}:h=${h}:x=${cx}:y='${dy}*n/${f}':eval=frame`;
-    case 5: // 固定中央（静止・最も安定）
-      return `scale=${sw}:${sh}:flags=lanczos,` +
-             `crop=w=${w}:h=${h}:x=${cx}:y=${cy}:eval=frame`;
-    default:
-      return `scale=${sw}:${sh}:flags=lanczos,` +
-             `crop=w=${w}:h=${h}:x=${cx}:y=${cy}:eval=frame`;
+      xExpr = String(-cx); yExpr = `floor(-${dy}*t/${d})`; break;
+    default: // 中央固定（最も安定）
+      xExpr = String(-cx); yExpr = String(-cy); break;
   }
+
+  return { sw, sh, xExpr, yExpr };
 };
 
 // ─── スタイル別カラーグレーディング ─────────────────────────────────────────
@@ -385,11 +386,21 @@ const renderClip = async (
         inputArgs = ['-loop', '1', '-t', String(dur), '-i', imgPath];
         vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},setpts=PTS-STARTPTS`;
       } else {
-        // 最終: Ken Burns バリエーション（5種類をローテーション）
-        inputArgs = ['-loop', '1', '-t', String(dur + 1), '-i', imgPath];
-        vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
-                 `${getBurnsFilter(index, frames, pw, ph)},` +
-                 `trim=duration=${dur},setpts=PTS-STARTPTS`;
+        // 最終: Ken Burns — overlay ベース（crop eval=frame 非対応 FFmpeg 対策）
+        // [0] = 黒キャンバス (lavfi color)  [1] = 画像ファイル
+        // overlay フィルターは t (秒) で x,y を per-frame 評価するため eval オプション不要
+        const burns = getBurnsFilter(index, dur, pw, ph);
+        inputArgs = [
+          '-f', 'lavfi', '-i', `color=c=black:s=${pw}x${ph}:r=30`, // [0] canvas
+          '-loop', '1', '-t', String(dur + 1), '-i', imgPath,       // [1] image
+        ];
+        vfBase =
+          // 画像をフレームにフィット → 1.07× スケールアップ → ラベル付け
+          `[1:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
+          `scale=${burns.sw}:${burns.sh}:flags=lanczos,setsar=1[_big];` +
+          // 黒キャンバスに画像をオーバーレイ（t で per-frame パン）
+          `[0:v][_big]overlay=x='${burns.xExpr}':y='${burns.yExpr}':shortest=1,` +
+          `trim=duration=${dur},setpts=PTS-STARTPTS`;
       }
     } else {
       inputArgs = ['-f', 'lavfi', '-t', String(dur), '-i', `color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30`];

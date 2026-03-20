@@ -214,6 +214,12 @@ const BGM_URL_MAP: Record<string, string> = {
   natural_warm:  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
 };
 
+// カットの総尺を計算（BGM duration に渡す）
+const calcPayloadDuration = (cuts: any[], defaultCutDur = 5): number =>
+  Array.isArray(cuts) && cuts.length > 0
+    ? cuts.reduce((acc: number, c: any) => acc + Number(c.duration || c.durationSec || defaultCutDur), 0)
+    : defaultCutDur;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level resolver functions (shared across template builders)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -632,7 +638,7 @@ const buildCollageInlineSource = (payload: Record<string, unknown>) => {
 
   const rootElements: any[] = [...scenes];
   if (bgmUrl) {
-    rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+    rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
   }
 
   return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
@@ -802,7 +808,7 @@ const buildMagazineInlineSource = (payload: Record<string, unknown>) => {
   });
 
   const rootElements: any[] = [...scenes];
-  if (bgmUrl) rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+  if (bgmUrl) rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
   return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
 };
 
@@ -962,7 +968,7 @@ const buildMinimalInlineSource = (payload: Record<string, unknown>) => {
   });
 
   const rootElements: any[] = [...scenes];
-  if (bgmUrl) rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+  if (bgmUrl) rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
   return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
 };
 
@@ -1121,13 +1127,17 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
     const timeStart = rawCuts.slice(0, i).reduce((acc: number, c: any) => acc + Number(c.duration || 4), 0);
     const dur       = Number(cut.duration || cut.durationSec || 4);
     const imgUrl    = String(cut.imageUrl || '').trim();
-    const hasImg    = imgUrl.startsWith('http');
     const isLastCut = i === totalCuts - 1;
     const isFirstCut = i === 0;
+    // Accent cut: every 4th middle cut → brand-color full-bleed, no photo (visual rhythm)
+    const isAccentCut = !isFirstCut && !isLastCut && i % 4 === 3;
+    const hasImg    = !isAccentCut && imgUrl.startsWith('http');
 
     // Layout: explicit on cut or cycling sequence
     const validLayouts: string[] = ['bottom', 'top', 'center', 'caption', 'billboard'];
-    const layout: LayoutType = validLayouts.includes(String(cut.layout || ''))
+    const layout: LayoutType = isAccentCut
+      ? 'center'
+      : validLayouts.includes(String(cut.layout || ''))
       ? (cut.layout as LayoutType)
       : LAYOUT_SEQ[i % LAYOUT_SEQ.length];
     const lp = getLayoutProps(layout);
@@ -1425,7 +1435,8 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
       track:         90,
       time:          0,
       source:        bgmUrl,
-      audio_fade_out: 1.5,
+      duration:       calcPayloadDuration(rawCuts),
+      audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05),
     });
   }
 
@@ -1608,7 +1619,7 @@ const buildGradientInlineSource = (payload: Record<string, unknown>) => {
   });
 
   const rootElements: any[] = [...scenes];
-  if (bgmUrl) rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+  if (bgmUrl) rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
   return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
 };
 

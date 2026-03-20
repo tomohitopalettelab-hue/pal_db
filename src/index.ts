@@ -1660,7 +1660,9 @@ const renderCreatomateJob = async (_req: Request, job: any) => {
     errorData: response.ok ? undefined : JSON.stringify(data),
   });
   if (!response.ok) {
-    throw new Error((Array.isArray(data) ? data[0]?.message : data?.message) || 'creatomate render failed');
+    const errData  = Array.isArray(data) ? data[0] : data;
+    const errMsg   = errData?.message || errData?.hint || errData?.error || JSON.stringify(errData) || 'creatomate render failed';
+    throw new Error(`Creatomate ${response.status}: ${errMsg}`);
   }
 
   const renderItem = Array.isArray(data) ? data[0] : data;

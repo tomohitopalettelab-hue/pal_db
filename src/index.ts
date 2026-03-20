@@ -881,10 +881,26 @@ const buildMinimalInlineSource = (payload: Record<string, unknown>) => {
       animations: [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
     });
 
-    // ── Main text (ultra-light, large) ───────────────────────────────────────
+    // ── Main text — cycling animation for variety ─────────────────────────────
     const textY = hasImg
       ? (isVertical ? '70%' : '78%')
       : (isVertical ? '50%' : '50%');
+    const MINIMAL_TITLE_ANIMS: any[][] = [
+      [{ type: 'fade',  duration: 1.0, easing: 'quadratic-out' }],
+      [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.8, easing: 'quadratic-out' }],
+      [{ type: 'scale', start_scale: '94%', end_scale: '100%', fade: true, duration: 1.0, easing: 'quadratic-out' }],
+      [{ type: 'wipe',  direction: 'right', duration: 0.9, easing: 'quadratic-out' }],
+      [{ type: 'blur',  blur: 18, fade: true, duration: 0.9, easing: 'quadratic-out' }],
+      [{ type: 'slide', direction: 'up', distance: '3%', fade: true, duration: 0.9, easing: 'quadratic-out' }],
+    ];
+    const MINIMAL_SUB_ANIMS: any[][] = [
+      [{ type: 'fade',  duration: 0.8, easing: 'quadratic-out' }],
+      [{ type: 'slide', direction: 'up', distance: '3%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+      [{ type: 'fade',  duration: 0.9, easing: 'quadratic-out' }],
+      [{ type: 'slide', direction: 'left', distance: '3%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+      [{ type: 'fade',  duration: 0.8, easing: 'quadratic-out' }],
+      [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+    ];
     if (mainText) {
       elements.push({
         type: 'text', track: 5, time: 0.35,
@@ -897,7 +913,7 @@ const buildMinimalInlineSource = (payload: Record<string, unknown>) => {
         font_weight: '200',
         fill_color: textColor,
         letter_spacing: 8, text_align: 'center', line_height: 1.4,
-        animations: [{ type: 'fade', duration: 0.9, easing: 'quadratic-out' }],
+        animations: MINIMAL_TITLE_ANIMS[i % MINIMAL_TITLE_ANIMS.length],
       });
     }
 
@@ -914,7 +930,7 @@ const buildMinimalInlineSource = (payload: Record<string, unknown>) => {
         font_weight: '100',
         fill_color: `rgba(26,26,26,0.55)`,
         letter_spacing: 5, text_align: 'center',
-        animations: [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
+        animations: MINIMAL_SUB_ANIMS[i % MINIMAL_SUB_ANIMS.length],
       });
     }
 

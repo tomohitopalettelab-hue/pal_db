@@ -2109,6 +2109,26 @@ const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ update
   return { updated, previewUrl };
 };
 
+// バックグラウンドレンダー共通ハンドラ
+const startBackgroundRender = (job: any, host: string) => {
+  upsertPalVideoJob({ id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+    status: 'レンダリング中', payload: job.payload, previewUrl: null, youtubeUrl: job.youtubeUrl,
+  }).catch(() => {});
+
+  setImmediate(async () => {
+    try {
+      const { previewUrl } = await renderWithFFmpegAndSave(job, host);
+      console.log('[pal-db] render complete:', job.id, previewUrl);
+    } catch (err) {
+      console.error('[pal-db] background render failed:', job.id, err);
+      await upsertPalVideoJob({ id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+        status: 'エラー', payload: { ...job.payload, renderError: (err as Error).message },
+        previewUrl: null, youtubeUrl: job.youtubeUrl,
+      }).catch(() => {});
+    }
+  });
+};
+
 app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
   try {
     const jobId = String(req.body?.jobId || '').trim();
@@ -2118,8 +2138,8 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
     const host = `${req.protocol}://${req.get('host')}`;
-    const { updated, previewUrl } = await renderWithFFmpegAndSave(job, host);
-    return res.json({ success: true, job: updated, previewUrl });
+    startBackgroundRender(job, host);
+    return res.json({ success: true, status: 'rendering', jobId: job.id });
   } catch (error) {
     console.error('[pal-db] pal-video generate failed', error);
     const message = error instanceof Error ? error.message : 'failed to generate pal_video';
@@ -2136,8 +2156,8 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
     const host = `${req.protocol}://${req.get('host')}`;
-    const { updated, previewUrl } = await renderWithFFmpegAndSave(job, host);
-    return res.json({ success: true, job: updated, previewUrl });
+    startBackgroundRender(job, host);
+    return res.json({ success: true, status: 'rendering', jobId: job.id });
   } catch (error) {
     console.error('[pal-db] pal-video render failed', error);
     const message = error instanceof Error ? error.message : 'failed to render pal_video';

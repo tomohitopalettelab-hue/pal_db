@@ -2120,12 +2120,13 @@ const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ update
 
 // バックグラウンドレンダー共通ハンドラ
 const startBackgroundRender = (job: any, host: string) => {
-  upsertPalVideoJob({ id: job.id, paletteId: job.paletteId, planCode: job.planCode,
-    status: 'レンダリング中', payload: job.payload, previewUrl: null, youtubeUrl: job.youtubeUrl,
-  }).catch(() => {});
-
   setImmediate(async () => {
     try {
+      // 初期ステータスをここで await して書く（fire-and-forgetにすると onProgress 書き込みと競合する）
+      await upsertPalVideoJob({ id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+        status: 'レンダリング中', payload: job.payload, previewUrl: null, youtubeUrl: job.youtubeUrl,
+      }).catch(() => {});
+
       const { previewUrl } = await renderWithFFmpegAndSave(job, host);
       console.log('[pal-db] render complete:', job.id, previewUrl);
     } catch (err) {
@@ -2146,6 +2147,11 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
+    // 既にレンダリング中なら重複起動を防ぐ
+    if (job.status === 'レンダリング中') {
+      return res.json({ success: true, status: 'rendering', jobId: job.id });
+    }
+
     const host = `${req.protocol}://${req.get('host')}`;
     startBackgroundRender(job, host);
     return res.json({ success: true, status: 'rendering', jobId: job.id });
@@ -2163,6 +2169,11 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
 
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
+
+    // 既にレンダリング中なら重複起動を防ぐ
+    if (job.status === 'レンダリング中') {
+      return res.json({ success: true, status: 'rendering', jobId: job.id });
+    }
 
     const host = `${req.protocol}://${req.get('host')}`;
     startBackgroundRender(job, host);

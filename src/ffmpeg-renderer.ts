@@ -158,37 +158,60 @@ const xfadeOf = (transition: string, idx: number): string => {
   return map[transition] || 'fade';
 };
 
-// ─── Text overlay filter ─────────────────────────────────────────────────────
+// ─── Shape + Text overlay filter ─────────────────────────────────────────────
 
-const textFilter = (
+const overlayFilter = (
   mainText: string, subText: string,
   layout: string, w: number, h: number, font: string,
+  colorAccent: string, dur: number,
 ): string => {
-  if (!mainText && !subText) return '';
-
   const isPortrait = h > w;
-  const mSize = Math.round(h * (isPortrait ? 0.036 : 0.042));
-  const sSize = Math.round(h * (isPortrait ? 0.021 : 0.025));
+  const mSize  = Math.round(h * (isPortrait ? 0.036 : 0.042));
+  const sSize  = Math.round(h * (isPortrait ? 0.021 : 0.025));
   const margin = Math.round(h * (isPortrait ? 0.065 : 0.055));
+  const bandH  = Math.round(h * (isPortrait ? 0.27 : 0.23));
+  const fadeIn = Math.min(0.6, dur * 0.15).toFixed(2); // テキストフェードイン秒
+  const accent = colorAccent.replace('#', '');
 
   const atTop    = layout === 'top' || layout === 'billboard';
   const atCenter = layout === 'center';
 
   const mY = atTop    ? `${margin}`
-           : atCenter ? `(h-text_h)/2${subText ? `-${Math.round(mSize/2 + 8)}` : ''}`
+           : atCenter ? `(h-text_h)/2${subText ? `-${Math.round(mSize / 2 + 8)}` : ''}`
            :            `h-${margin + (subText ? mSize + sSize + 14 : mSize)}`;
   const sY = atTop    ? `${margin + mSize + 10}`
            : atCenter ? `(h+text_h)/2${mainText ? `+8` : ''}`
            :            `h-${margin + sSize}`;
 
-  const shadow = 'shadowcolor=black@0.75:shadowx=2:shadowy=2';
   const parts: string[] = [];
 
+  // ── シェイプ: テキスト背景バンド + アクセントライン ──────────
+  if (atTop) {
+    parts.push(`drawbox=x=0:y=0:w=iw:h=${bandH}:color=0x000000@0.55:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandH - 3}:w=iw:h=3:color=0x${accent}@0.9:t=fill`);
+  } else if (atCenter) {
+    const bandY = Math.round(h / 2 - bandH / 2);
+    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.55:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY}:w=4:h=${bandH}:color=0x${accent}@0.9:t=fill`);
+    parts.push(`drawbox=x=iw-4:y=${bandY}:w=4:h=${bandH}:color=0x${accent}@0.9:t=fill`);
+  } else {
+    // bottom
+    const bandY = h - bandH;
+    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.55:t=fill`);
+    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=3:color=0x${accent}@0.9:t=fill`);
+  }
+
+  // ── テキスト: フェードイン + シャドウ ────────────────────────
+  if (!mainText && !subText) return parts.join(',');
+
+  const shadow = 'shadowcolor=black@0.75:shadowx=2:shadowy=2';
+  const alpha  = `'min(t/${fadeIn},1)'`;
+
   if (mainText) parts.push(
-    `drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=(w-text_w)/2:y=${mY}:${shadow}`
+    `drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=(w-text_w)/2:y=${mY}:${shadow}:alpha=${alpha}`
   );
   if (subText) parts.push(
-    `drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.88:x=(w-text_w)/2:y=${sY}:${shadow}`
+    `drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.88:x=(w-text_w)/2:y=${sY}:${shadow}:alpha=${alpha}`
   );
   return parts.join(',');
 };
@@ -255,11 +278,11 @@ const renderClip = async (
     vfBase = `[0:v]format=yuv420p`;
   }
 
-  const txt = textFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font);
+  const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, dur);
   const fadeOut = dur - fadeDur;
   const filters = [
     vfBase,
-    ...(txt ? [txt] : []),
+    ...(overlay ? [overlay] : []),
     `format=yuv420p`,
     `fade=t=in:st=0:d=${fadeDur}`,
     `fade=t=out:st=${fadeOut}:d=${fadeDur}`,
@@ -317,6 +340,18 @@ export const renderWithFFmpeg = async (
     }));
 
   if (rawCuts.length === 0) throw new Error('cuts が空です');
+
+  // ── 尺補正: payload.duration と cuts の合計が乖離している場合にスケーリング ──
+  const targetDuration = Number(payload?.duration || 0);
+  if (targetDuration > 0) {
+    const actualDuration = rawCuts.reduce((sum, c) => sum + c.duration, 0);
+    if (actualDuration > 0 && Math.abs(actualDuration - targetDuration) > 1) {
+      console.log(`[ffmpeg] scaling cut durations: ${actualDuration.toFixed(1)}s → ${targetDuration}s`);
+      const scale = targetDuration / actualDuration;
+      rawCuts.forEach(c => { c.duration = Math.max(1, parseFloat((c.duration * scale).toFixed(2))); });
+    }
+  }
+
   const total = rawCuts.length;
 
   // ── 1. Render clips sequentially ──────────────────────────────────────────

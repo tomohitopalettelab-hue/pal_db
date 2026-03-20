@@ -4,9 +4,10 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, createReadStream } from 'fs';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
+import { renderWithFFmpeg } from './ffmpeg-renderer.js';
 import {
   deleteAccountStatusOption,
   deleteAccount,
@@ -2087,18 +2088,38 @@ app.post('/api/pal-video/debug-source', async (req: Request, res: Response) => {
   }
 });
 
+// ── FFmpeg render helper ──────────────────────────────────────────────────────
+const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ updated: any; previewUrl: string }> => {
+  const payload = (job.payload || {}) as Record<string, unknown>;
+  const filePath = await renderWithFFmpeg(payload, job.id);
+
+  // Public URL served by this Express server
+  const previewUrl = `${host}/api/pal-video/files/${job.id}`;
+
+  const updated = await upsertPalVideoJob({
+    id:         job.id,
+    paletteId:  job.paletteId,
+    planCode:   job.planCode,
+    status:     '確認中',
+    payload:    { ...payload },
+    previewUrl,
+    youtubeUrl: job.youtubeUrl,
+  });
+
+  return { updated, previewUrl };
+};
+
 app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
   try {
-    if (!CREATOMATE_API_KEY) {
-      return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
-    }
     const jobId = String(req.body?.jobId || '').trim();
     if (!jobId) return res.status(400).json({ success: false, error: 'jobId is required' });
 
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
-    const result = await renderCreatomateJob(req, job);
-    return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
+
+    const host = `${req.protocol}://${req.get('host')}`;
+    const { updated, previewUrl } = await renderWithFFmpegAndSave(job, host);
+    return res.json({ success: true, job: updated, previewUrl });
   } catch (error) {
     console.error('[pal-db] pal-video generate failed', error);
     const message = error instanceof Error ? error.message : 'failed to generate pal_video';
@@ -2108,20 +2129,35 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
 
 app.post('/api/pal-video/render', async (req: Request, res: Response) => {
   try {
-    if (!CREATOMATE_API_KEY) {
-      return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
-    }
     const jobId = String(req.body?.jobId || '').trim();
     if (!jobId) return res.status(400).json({ success: false, error: 'jobId is required' });
 
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
-    const result = await renderCreatomateJob(req, job);
-    return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
+
+    const host = `${req.protocol}://${req.get('host')}`;
+    const { updated, previewUrl } = await renderWithFFmpegAndSave(job, host);
+    return res.json({ success: true, job: updated, previewUrl });
   } catch (error) {
     console.error('[pal-db] pal-video render failed', error);
     const message = error instanceof Error ? error.message : 'failed to render pal_video';
     return res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ── 生成済み MP4 ファイル配信 ──────────────────────────────────────────────────
+app.get('/api/pal-video/files/:jobId', async (req: Request, res: Response) => {
+  const jobId = String(req.params.jobId || '').replace(/[^a-zA-Z0-9_\-]/g, '');
+  const filePath = `/tmp/pal-video/${jobId}_output.mp4`;
+  try {
+    const stat = await fs.stat(filePath);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `inline; filename="video-${jobId}.mp4"`);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    createReadStream(filePath).pipe(res);
+  } catch {
+    res.status(404).json({ success: false, error: 'file not found — re-render to regenerate' });
   }
 });
 

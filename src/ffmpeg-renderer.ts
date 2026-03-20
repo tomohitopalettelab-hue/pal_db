@@ -181,22 +181,48 @@ const xfadeOf = (transition: string, idx: number): string => {
   return map[transition] || 'fade';
 };
 
-// ─── Ken Burns バリエーション（カットごとに変化） ────────────────────────────
-
+// ─── Ken Burns バリエーション — zoompan フリー実装 ───────────────────────────
+//
+// zoompan は d フレーム分をメモリにバッファするため OOM の主因になる。
+// scale(1.06x) + crop(eval=frame) に置き換えることで、
+// フレームバッファは常に 2〜3 枚のみ（≈18MB）に抑えられる。
+//
+// 動き: pre-scale した大きめ画像を 1 フレームずつクロップ位置を動かすことで
+// カメラパン・ドリーのような視覚効果を得る。
+//
 const getBurnsFilter = (index: number, frames: number, w: number, h: number): string => {
-  switch (index % 5) {
-    case 0: // ズームイン（中央）
-      return `zoompan=z='min(zoom+0.0012,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
-    case 1: // ズームアウト（中央）
-      return `zoompan=z='if(eq(on,1),1.08,max(zoom-0.001,1.01))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
-    case 2: // 左→右パン
-      return `zoompan=z='1.06':x='(iw-iw/zoom)*on/${frames}':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
-    case 3: // 右→左パン
-      return `zoompan=z='1.06':x='(iw-iw/zoom)*(1-on/${frames})':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
-    case 4: // 斜めズームイン（左上起点）
-      return `zoompan=z='min(zoom+0.001,1.07)':x='(iw-iw/zoom)*on/(${frames}*2)':y='(ih-ih/zoom)*on/(${frames}*2)':d=${frames}:s=${w}x${h}:fps=30`;
+  // 1.07 倍にスケールしてパン余白を作る（7% = ~76px @ 1080px）
+  const ZOOM = 1.07;
+  const sw = Math.round(w * ZOOM); // スケール後幅
+  const sh = Math.round(h * ZOOM); // スケール後高さ
+  const dx = sw - w;               // 横方向パン可能量 (px)
+  const dy = sh - h;               // 縦方向パン可能量 (px)
+  const cx = Math.round(dx / 2);   // 中央X オフセット
+  const cy = Math.round(dy / 2);   // 中央Y オフセット
+  const f  = frames;
+
+  switch (index % 6) {
+    case 0: // 左上→右下ドリー（ズームイン風）
+      return `scale=${sw}:${sh}:flags=lanczos,` +
+             `crop=w=${w}:h=${h}:x='${dx}*n/${f}':y='${dy}*n/${f}':eval=frame`;
+    case 1: // 右下→左上ドリー（ズームアウト風）
+      return `scale=${sw}:${sh}:flags=lanczos,` +
+             `crop=w=${w}:h=${h}:x='${dx}*(1-n/${f})':y='${dy}*(1-n/${f})':eval=frame`;
+    case 2: // 左→右パン（Y 中央固定）
+      return `scale=${sw}:${sh}:flags=lanczos,` +
+             `crop=w=${w}:h=${h}:x='${dx}*n/${f}':y=${cy}:eval=frame`;
+    case 3: // 右→左パン（Y 中央固定）
+      return `scale=${sw}:${sh}:flags=lanczos,` +
+             `crop=w=${w}:h=${h}:x='${dx}*(1-n/${f})':y=${cy}:eval=frame`;
+    case 4: // 上→下パン（X 中央固定）
+      return `scale=${sw}:${sh}:flags=lanczos,` +
+             `crop=w=${w}:h=${h}:x=${cx}:y='${dy}*n/${f}':eval=frame`;
+    case 5: // 固定中央（静止・最も安定）
+      return `scale=${sw}:${sh}:flags=lanczos,` +
+             `crop=w=${w}:h=${h}:x=${cx}:y=${cy}:eval=frame`;
     default:
-      return `zoompan=z='min(zoom+0.0012,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`;
+      return `scale=${sw}:${sh}:flags=lanczos,` +
+             `crop=w=${w}:h=${h}:x=${cx}:y=${cy}:eval=frame`;
   }
 };
 
@@ -435,7 +461,7 @@ export const renderWithFFmpeg = async (
   const bgmUrl       = bgmKey.startsWith('http') ? bgmKey : (BGM_URLS[bgmKey] || '');
 
   const rawCuts: Cut[] = ((Array.isArray(payload?.cuts) ? payload.cuts : []) as any[])
-    .slice(0, 7)
+    .slice(0, 5) // 最大5カット: xfade 同時デコード数を抑えメモリを節約
     .map((c: any) => ({
       id:         String(c.id       || ''),
       duration:   Number(c.duration || 4),
@@ -462,23 +488,29 @@ export const renderWithFFmpeg = async (
   const total = rawCuts.length;
 
   // ── 1. Render clips sequentially ──────────────────────────────────────────
+  // 画像は各クリップ完了後すぐ削除してディスク/メモリを解放
   const clipPaths: string[] = [];
   for (let i = 0; i < rawCuts.length; i++) {
     console.log(`[ffmpeg] cut ${i + 1}/${total}…`);
     await onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
     const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg, preview, style);
     clipPaths.push(p);
+    // 画像ファイルをクリップ完成直後に削除（ディスク節約）
+    await fs.unlink(`${TMP}/${jobId}_img_${i}.jpg`).catch(() => {});
     await onProgress?.({ step: 'clip', current: i + 1, total, label: `カット ${i + 1} / ${total} 完了` });
   }
 
   // ── 2. Concat ──────────────────────────────────────────────────────────────
+  // xfade を全クリップに一括適用するとデコーダーが同時に走りメモリが爆発する。
+  // 代わりに「2 クリップずつ逐次 xfade → 中間 mp4 に書き出し」を繰り返す。
+  // メモリ使用量: 常に 2 入力 × 1 xfade バッファ = ~90MB 以下に収まる。
   const TRANS_DUR = 0.5;
   let concatPath: string;
 
   if (clipPaths.length === 1) {
     concatPath = clipPaths[0];
   } else if (preview) {
-    // プレビュー: concat demuxer (ストリームコピー、メモリほぼゼロ)
+    // プレビュー: concat demuxer → ultrafast 再エンコード（メモリほぼゼロ）
     concatPath = `${TMP}/${jobId}_concat.mp4`;
     const listPath = `${TMP}/${jobId}_list.txt`;
     const listContent = clipPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
@@ -486,7 +518,6 @@ export const renderWithFFmpeg = async (
 
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concat demuxer (preview)…');
-    // -c copy はタイムスタンプがズレるため再エンコード（ultrafast で高速）
     await runFFmpeg(ffmpeg, [
       '-y', '-loglevel', 'error',
       '-f', 'concat', '-safe', '0', '-i', listPath,
@@ -496,35 +527,44 @@ export const renderWithFFmpeg = async (
     ], 120000);
     await fs.unlink(listPath).catch(() => {});
   } else {
-    // 最終: xfade トランジション付き結合
-    concatPath = `${TMP}/${jobId}_concat.mp4`;
-    const inputArgs = clipPaths.map(p => `-i "${p}"`).join(' ');
-
-    let filterParts = '';
-    let currentStream = '[0:v]';
-    let timeOffset = 0;
-
-    for (let i = 0; i < clipPaths.length - 1; i++) {
-      timeOffset += rawCuts[i].duration - TRANS_DUR;
-      const isLast = i === clipPaths.length - 2;
-      const outLabel = isLast ? '[vout]' : `[v${i}]`;
-      const trans = xfadeOf(rawCuts[i + 1].transition, i);
-      filterParts += `${currentStream}[${i + 1}:v]xfade=transition=${trans}:duration=${TRANS_DUR}:offset=${timeOffset.toFixed(3)}${outLabel};`;
-      currentStream = outLabel;
-    }
-
-    const inputArgsList = clipPaths.flatMap(p => ['-i', p]);
-
+    // 最終: 2 クリップずつ xfade で逐次結合
+    // これにより FFmpeg が同時にデコードするストリームを常に 2 本に限定できる
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
-    console.log('[ffmpeg] concatenating with xfade…');
-    await runFFmpeg(ffmpeg, [
-      '-y', '-loglevel', 'error',
-      ...inputArgsList,
-      '-filter_complex', filterParts.replace(/;$/, ''), '-map', '[vout]',
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '2', '-an',
-      '-movflags', '+faststart',
-      concatPath,
-    ], 300000);
+    console.log('[ffmpeg] sequential pairwise xfade…');
+
+    let currentPath = clipPaths[0];
+    let currentDur  = rawCuts[0].duration;
+
+    for (let i = 1; i < clipPaths.length; i++) {
+      const nextPath  = clipPaths[i];
+      const nextDur   = rawCuts[i].duration;
+      const trans     = xfadeOf(rawCuts[i].transition, i - 1);
+      const offset    = Math.max(0, currentDur - TRANS_DUR);
+      const outPath   = `${TMP}/${jobId}_merge_${i}.mp4`;
+
+      console.log(`[ffmpeg] xfade merge ${i}/${clipPaths.length - 1}: trans=${trans}, offset=${offset.toFixed(3)}s`);
+      await runFFmpeg(ffmpeg, [
+        '-y', '-loglevel', 'error',
+        '-i', currentPath,
+        '-i', nextPath,
+        '-filter_complex',
+          `[0:v][1:v]xfade=transition=${trans}:duration=${TRANS_DUR}:offset=${offset.toFixed(3)}[vout]`,
+        '-map', '[vout]',
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '1', '-an',
+        '-movflags', '+faststart',
+        outPath,
+      ], 300000);
+
+      // 前の中間ファイルを削除（元の clipPath は残す ← cleanup ステップで削除）
+      if (currentPath !== clipPaths[0] && !clipPaths.includes(currentPath)) {
+        await fs.unlink(currentPath).catch(() => {});
+      }
+      currentPath  = outPath;
+      currentDur  += nextDur - TRANS_DUR;
+
+      await onProgress?.({ step: 'concat', current: i, total, label: `結合中 ${i}/${clipPaths.length - 1}...` });
+    }
+    concatPath = currentPath;
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────

@@ -3,9 +3,10 @@ import dotenv from 'dotenv';
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, createReadStream } from 'fs';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
+import { renderWithFFmpeg, DATA_DIR } from './ffmpeg-renderer.js';
 import { deleteAccountStatusOption, deleteAccount, deleteContract, deleteContractOption, deletePlan, deleteServiceSubscription, deleteMediaAsset, ensureTables, createMediaAsset, getPaletteServices, getPaletteSummary, hasChatLoginId, getMediaAssetById, listAccountStatusOptions, listAccounts, listContracts, listContractOptions, listMediaAssets, listPlans, listPalVideoJobs, listServiceSubscriptions, getPalVideoJob, upsertAccountStatusOption, upsertAccount, upsertContract, upsertContractOption, upsertPlan, upsertPalVideoJob, upsertServiceSubscription, verifyChatLogin, } from './store.js';
 dotenv.config();
 if (!process.env.POSTGRES_URL) {
@@ -164,13 +165,18 @@ const DESTINATION_DIMENSIONS = {
     youtube: [1920, 1080],
     web_banner: [1920, 1080],
 };
-// BGM tracks (royalty-free)
+// BGM tracks (royalty-free, SoundHelix — external hotlink allowed)
+// Pixabay CDN blocks requests from render servers (403), so we use SoundHelix instead.
 const BGM_URL_MAP = {
-    bright_pop: 'https://cdn.pixabay.com/audio/2022/05/27/audio_1808fbf07a.mp3',
-    cool_minimal: 'https://cdn.pixabay.com/audio/2022/03/10/audio_270f49d28e.mp3',
-    cinematic: 'https://cdn.pixabay.com/audio/2022/01/20/audio_d0bd90a6d6.mp3',
-    natural_warm: 'https://cdn.pixabay.com/audio/2021/11/13/audio_7b6e8dd7bf.mp3',
+    bright_pop: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+    cool_minimal: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3',
+    cinematic: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3',
+    natural_warm: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
 };
+// カットの総尺を計算（BGM duration に渡す）
+const calcPayloadDuration = (cuts, defaultCutDur = 5) => Array.isArray(cuts) && cuts.length > 0
+    ? cuts.reduce((acc, c) => acc + Number(c.duration || c.durationSec || defaultCutDur), 0)
+    : defaultCutDur;
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level resolver functions (shared across template builders)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -319,7 +325,7 @@ const resolveTitleAnim = (animation, idx, layout) => {
     if (a === 'elastic')
         return [{ type: 'scale', start_scale: '55%', end_scale: '100%', fade: true, duration: 0.85, easing: 'elastic-out' }];
     if (a === 'blur')
-        return [{ type: 'blur', blur: 28, fade: true, duration: 0.75, easing: 'quadratic-out' }];
+        return [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.85, easing: 'quadratic-out' }]; // blur→scale+fade (blur unsupported on text)
     if (a === 'wipe')
         return [{ type: 'wipe', direction: 'right', duration: 0.65, easing: 'quadratic-out' }];
     if (a === 'rise')
@@ -327,7 +333,7 @@ const resolveTitleAnim = (animation, idx, layout) => {
     if (a === 'drop')
         return [{ type: 'slide', direction: layout === 'top' || layout === 'billboard' ? 'down' : 'up', distance: '15%', fade: true, duration: 0.65, easing: 'back-out' }];
     if (a === 'typewriter')
-        return [{ type: 'typewriter', duration: 0.8, split: 'character' }];
+        return [{ type: 'text-typewriter', duration: 0.8 }];
     if (a === 'text-slide')
         return [{ type: 'text-slide', direction: 'up', duration: 0.65, easing: 'back-out' }];
     if (a === 'spin')
@@ -340,7 +346,7 @@ const resolveTitleAnim = (animation, idx, layout) => {
         [{ type: 'slide', direction: 'left', distance: '10%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
         [{ type: 'scale', start_scale: '85%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }],
         [{ type: 'wipe', direction: 'right', duration: 0.65, easing: 'quadratic-out' }],
-        [{ type: 'blur', blur: 24, fade: true, duration: 0.7, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.75, easing: 'quadratic-out' }], // was blur
         [{ type: 'slide', direction: 'right', distance: '10%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
         [{ type: 'scale', start_scale: '58%', end_scale: '100%', fade: true, duration: 0.8, easing: 'elastic-out' }],
         [{ type: 'spin', rotation: '-10°', fade: true, duration: 0.65, easing: 'back-out' }],
@@ -359,7 +365,7 @@ const resolveSubAnim = (animation, idx) => {
     if (a === 'none')
         return [];
     if (a === 'blur')
-        return [{ type: 'blur', blur: 16, fade: true, duration: 0.7, easing: 'quadratic-out' }];
+        return [{ type: 'scale', start_scale: '95%', end_scale: '100%', fade: true, duration: 0.7, easing: 'quadratic-out' }]; // blur→scale+fade
     if (a === 'zoom')
         return [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }];
     if (a === 'pop')
@@ -376,41 +382,47 @@ const resolveSubAnim = (animation, idx) => {
     const SUB_AUTO = [
         [{ type: 'slide', direction: 'up', distance: '8%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
         [{ type: 'fade', duration: 0.7, easing: 'quadratic-out' }],
-        [{ type: 'blur', blur: 12, fade: true, duration: 0.6, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '93%', end_scale: '100%', fade: true, duration: 0.6, easing: 'quadratic-out' }], // was blur
         [{ type: 'slide', direction: 'left', distance: '6%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
         [{ type: 'scale', start_scale: '90%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }],
         [{ type: 'wipe', direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
         [{ type: 'slide', direction: 'right', distance: '6%', fade: true, duration: 0.55, easing: 'quadratic-out' }],
-        [{ type: 'blur', blur: 8, fade: true, duration: 0.5, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.5, easing: 'back-out' }], // was blur
     ];
     return SUB_AUTO[idx % SUB_AUTO.length];
 };
-// ── Ken Burns: pan + zoom via keyframes (Canva-grade cinematic motion) ──────
+// ── Ken Burns: cinematic pan + zoom (more dramatic for professional feel) ────
 const resolveKenBurns = (idx, dur) => {
-    // zoom: alternating in/out
+    // Alternating zoom-in and zoom-out patterns — more dramatic range (14-20%)
     const scales = [
-        ['100%', '115%'], ['116%', '102%'], ['100%', '114%'], ['113%', '100%'],
-        ['102%', '116%'], ['115%', '100%'], ['100%', '113%'], ['112%', '100%'],
+        ['100%', '119%'], // slow zoom in
+        ['120%', '102%'], // dramatic zoom out
+        ['100%', '117%'], // gentle zoom in
+        ['118%', '100%'], // pull back
+        ['102%', '120%'], // zoom in from slightly wide
+        ['119%', '100%'], // zoom out to original
+        ['100%', '116%'], // classic zoom in
+        ['117%', '101%'], // subtle zoom out
     ];
     const [s0, s1] = scales[idx % scales.length];
-    // pan: subtle drift in 8 directions
+    // Pan: more noticeable drift (3.5% range) for visible motion
     const pans = [
-        { x0: '50%', y0: '50%', x1: '52.5%', y1: '48.5%' },
-        { x0: '52%', y0: '52%', x1: '49.5%', y1: '50%' },
-        { x0: '49%', y0: '51%', x1: '51.5%', y1: '49%' },
-        { x0: '52%', y0: '49%', x1: '50%', y1: '51.5%' },
-        { x0: '50%', y0: '52%', x1: '52%', y1: '50%' },
-        { x0: '51%', y0: '50%', x1: '49%', y1: '52%' },
-        { x0: '49%', y0: '49%', x1: '51%', y1: '51%' },
-        { x0: '52%', y0: '51%', x1: '50%', y1: '49%' },
+        { x0: '50%', y0: '50%', x1: '53.5%', y1: '47.5%' }, // drift right+up
+        { x0: '53%', y0: '53%', x1: '49.5%', y1: '50.5%' }, // drift left+down
+        { x0: '48%', y0: '51%', x1: '51.5%', y1: '48.5%' }, // drift right+up
+        { x0: '52%', y0: '48%', x1: '49%', y1: '52%' }, // drift left+down
+        { x0: '50%', y0: '53%', x1: '53%', y1: '49.5%' }, // drift right+up
+        { x0: '52%', y0: '50%', x1: '48.5%', y1: '52.5%' }, // drift left+down
+        { x0: '48%', y0: '48%', x1: '51.5%', y1: '51.5%' }, // diagonal drift
+        { x0: '53%', y0: '52%', x1: '50%', y1: '48%' }, // drift left+up
     ];
     const p = pans[idx % pans.length];
     const t = `${dur} s`;
     return {
         x: [{ time: '0 s', value: p.x0 }, { time: t, value: p.x1, easing: 'quintic-in-out' }],
         y: [{ time: '0 s', value: p.y0 }, { time: t, value: p.y1, easing: 'quintic-in-out' }],
-        x_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
-        y_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'linear' }],
+        x_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'quadratic-in-out' }],
+        y_scale: [{ time: '0 s', value: s0 }, { time: t, value: s1, easing: 'quadratic-in-out' }],
     };
 };
 // ─────────────────────────────────────────────────────────────────────────────
@@ -451,8 +463,8 @@ const buildCollageInlineSource = (payload) => {
     ];
     const scenes = rawCuts.map((cut, i) => {
         const dur = Number(cut.duration || cut.durationSec || 9);
-        const mainText = String(cut.mainText || '');
-        const subText = String(cut.subText || '');
+        const mainText = String(cut.mainText || cut.title || cut.textMain || '');
+        const subText = String(cut.subText || cut.subtitle || cut.textSub || '');
         const caption = String(cut.caption || '');
         const rawImgs = Array.isArray(cut.images) ? cut.images : cut.imageUrl ? [cut.imageUrl] : [];
         const imgs = rawImgs.map((u) => String(u || '')).filter((u) => u.startsWith('http'));
@@ -586,7 +598,7 @@ const buildCollageInlineSource = (payload) => {
     });
     const rootElements = [...scenes];
     if (bgmUrl) {
-        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
     }
     return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
 };
@@ -610,8 +622,8 @@ const buildMagazineInlineSource = (payload) => {
     const brandName = String(payload?.title || '').toUpperCase() || 'BRAND';
     const scenes = rawCuts.slice(0, 7).map((cut, i) => {
         const dur = Number(cut.duration || cut.durationSec || 5);
-        const mainText = String(cut.mainText || '');
-        const subText = String(cut.subText || '');
+        const mainText = String(cut.mainText || cut.title || cut.textMain || '');
+        const subText = String(cut.subText || cut.subtitle || cut.textSub || '');
         const imgUrl = String(cut.imageUrl || '').trim();
         const hasImg = imgUrl.startsWith('http');
         const isLeft = i % 2 === 0; // alternate panel side each scene
@@ -657,7 +669,9 @@ const buildMagazineInlineSource = (payload) => {
             animations: [{ type: 'slide', direction: isLeft ? 'right' : 'left', distance: '6%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
         });
         // ── Bright accent edge line ──────────────────────────────────────────────
-        const lineX = isLeft ? panelW : `calc(100% - ${panelW})`;
+        // panelW is '50%' (vertical) or '44%' (wide). Compute the right-side x numerically.
+        const panelWNum = isVertical ? 50 : 44;
+        const lineX = isLeft ? `${panelWNum}%` : `${100 - panelWNum}%`;
         elements.push({
             type: 'shape', track: 4, time: 0.18,
             path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
@@ -737,7 +751,7 @@ const buildMagazineInlineSource = (payload) => {
     });
     const rootElements = [...scenes];
     if (bgmUrl)
-        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
     return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
 };
 // ─────────────────────────────────────────────────────────────────────────────
@@ -758,8 +772,8 @@ const buildMinimalInlineSource = (payload) => {
         : [{ mainText: String(payload?.telopMain || ''), subText: String(payload?.telopSub || ''), duration: 5, imageUrl: '' }];
     const scenes = rawCuts.slice(0, 7).map((cut, i) => {
         const dur = Number(cut.duration || cut.durationSec || 5);
-        const mainText = String(cut.mainText || '');
-        const subText = String(cut.subText || '');
+        const mainText = String(cut.mainText || cut.title || cut.textMain || '');
+        const subText = String(cut.subText || cut.subtitle || cut.textSub || '');
         const imgUrl = String(cut.imageUrl || '').trim();
         const hasImg = imgUrl.startsWith('http');
         const timeStart = rawCuts.slice(0, i).reduce((acc, c) => acc + Number(c.duration || 5), 0);
@@ -773,25 +787,31 @@ const buildMinimalInlineSource = (payload) => {
         });
         // ── Central image (subtle rounded card) ─────────────────────────────────
         if (hasImg) {
-            const imgH = isVertical ? '45%' : '55%';
-            const imgW = isVertical ? '82%' : '70%';
+            // Card dimensions (slightly larger than image for white shadow frame effect)
+            const imgWNum = isVertical ? 82 : 70;
+            const imgHNum = isVertical ? 45 : 55;
+            const cardWStr = `${imgWNum + 3}%`;
+            const cardHStr = `${imgHNum + 2}%`;
+            const imgWStr = `${imgWNum}%`;
+            const imgHStr = `${imgHNum}%`;
+            const imgY = isVertical ? '38%' : '45%';
             // White card shadow behind image
             elements.push({
                 type: 'shape', track: 2, time: 0,
                 path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
                 fill_color: '#FFFFFF',
-                width: `calc(${imgW} + 2%)`, height: `calc(${imgH} + 1.5%)`,
-                x: '50%', y: isVertical ? '38%' : '45%', x_anchor: '50%', y_anchor: '50%',
+                width: cardWStr, height: cardHStr,
+                x: '50%', y: imgY, x_anchor: '50%', y_anchor: '50%',
                 border_radius: 8,
                 shadow_color: 'rgba(0,0,0,0.08)', shadow_blur: 24, shadow_x: 0, shadow_y: 8,
                 animations: [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
             });
             elements.push({
                 type: 'image', track: 3, time: 0, source: imgUrl, dynamic: true,
-                width: imgW, height: imgH,
-                x: '50%', y: isVertical ? '38%' : '45%', x_anchor: '50%', y_anchor: '50%',
+                width: imgWStr, height: imgHStr,
+                x: '50%', y: imgY, x_anchor: '50%', y_anchor: '50%',
                 fill_mode: 'cover', border_radius: 6,
-                animations: [{ type: 'scale', start_scale: '102%', end_scale: '100%', fade: true, duration: 1.2, easing: 'quadratic-out' }],
+                animations: [{ type: 'scale', start_scale: '104%', end_scale: '100%', fade: true, duration: 1.4, easing: 'quadratic-out' }],
             });
         }
         // ── Thin top accent line ─────────────────────────────────────────────────
@@ -803,10 +823,26 @@ const buildMinimalInlineSource = (payload) => {
             x: '50%', y: isVertical ? '5%' : '4%', x_anchor: '50%', y_anchor: '50%',
             animations: [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
         });
-        // ── Main text (ultra-light, large) ───────────────────────────────────────
+        // ── Main text — cycling animation for variety ─────────────────────────────
         const textY = hasImg
             ? (isVertical ? '70%' : '78%')
             : (isVertical ? '50%' : '50%');
+        const MINIMAL_TITLE_ANIMS = [
+            [{ type: 'fade', duration: 1.0, easing: 'quadratic-out' }],
+            [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.8, easing: 'quadratic-out' }],
+            [{ type: 'scale', start_scale: '94%', end_scale: '100%', fade: true, duration: 1.0, easing: 'quadratic-out' }],
+            [{ type: 'wipe', direction: 'right', duration: 0.9, easing: 'quadratic-out' }],
+            [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.9, easing: 'quadratic-out' }],
+            [{ type: 'slide', direction: 'up', distance: '3%', fade: true, duration: 0.9, easing: 'quadratic-out' }],
+        ];
+        const MINIMAL_SUB_ANIMS = [
+            [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
+            [{ type: 'slide', direction: 'up', distance: '3%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+            [{ type: 'fade', duration: 0.9, easing: 'quadratic-out' }],
+            [{ type: 'slide', direction: 'left', distance: '3%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+            [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
+            [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+        ];
         if (mainText) {
             elements.push({
                 type: 'text', track: 5, time: 0.35,
@@ -819,7 +855,7 @@ const buildMinimalInlineSource = (payload) => {
                 font_weight: '200',
                 fill_color: textColor,
                 letter_spacing: 8, text_align: 'center', line_height: 1.4,
-                animations: [{ type: 'fade', duration: 0.9, easing: 'quadratic-out' }],
+                animations: MINIMAL_TITLE_ANIMS[i % MINIMAL_TITLE_ANIMS.length],
             });
         }
         // ── Subtitle (very thin, spaced) ─────────────────────────────────────────
@@ -835,7 +871,7 @@ const buildMinimalInlineSource = (payload) => {
                 font_weight: '100',
                 fill_color: `rgba(26,26,26,0.55)`,
                 letter_spacing: 5, text_align: 'center',
-                animations: [{ type: 'fade', duration: 0.8, easing: 'quadratic-out' }],
+                animations: MINIMAL_SUB_ANIMS[i % MINIMAL_SUB_ANIMS.length],
             });
         }
         // ── Bottom thin accent line ──────────────────────────────────────────────
@@ -863,7 +899,7 @@ const buildMinimalInlineSource = (payload) => {
     });
     const rootElements = [...scenes];
     if (bgmUrl)
-        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
     return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
 };
 const buildCreatomateInlineSource = (payload) => {
@@ -877,6 +913,16 @@ const buildCreatomateInlineSource = (payload) => {
     const textColor = String(payload?.textColor || '#ffffff');
     const bgmRaw = String(payload?.bgm || '');
     const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+    const purpose = String(payload?.purpose || '');
+    // ── CTA text based on purpose ─────────────────────────────────────────────────
+    const CTA_BY_PURPOSE = {
+        promotion: 'キャンペーン詳細はプロフィールから  →',
+        sns_post: 'フォロー＆チェック  →',
+        sns_ad: '今すぐ詳細を確認  →',
+        review: 'あなたも体験してみて  →',
+        achievement: '実績の詳細はこちら  →',
+    };
+    const ctaText = CTA_BY_PURPOSE[purpose] || 'プロフィールをチェック  →';
     const LAYOUT_SEQ = ['bottom', 'billboard', 'caption', 'center', 'bottom', 'caption', 'bottom'];
     const getLayoutProps = (layout) => {
         const barW = isVertical ? '1.1 vmin' : '0.75 vmin';
@@ -985,14 +1031,18 @@ const buildCreatomateInlineSource = (payload) => {
         const timeStart = rawCuts.slice(0, i).reduce((acc, c) => acc + Number(c.duration || 4), 0);
         const dur = Number(cut.duration || cut.durationSec || 4);
         const imgUrl = String(cut.imageUrl || '').trim();
-        const hasImg = imgUrl.startsWith('http');
         const isLastCut = i === totalCuts - 1;
         const isFirstCut = i === 0;
+        // Accent cut: every 4th middle cut → brand-color full-bleed, no photo (visual rhythm)
+        const isAccentCut = !isFirstCut && !isLastCut && i % 4 === 3;
+        const hasImg = !isAccentCut && imgUrl.startsWith('http');
         // Layout: explicit on cut or cycling sequence
         const validLayouts = ['bottom', 'top', 'center', 'caption', 'billboard'];
-        const layout = validLayouts.includes(String(cut.layout || ''))
-            ? cut.layout
-            : LAYOUT_SEQ[i % LAYOUT_SEQ.length];
+        const layout = isAccentCut
+            ? 'center'
+            : validLayouts.includes(String(cut.layout || ''))
+                ? cut.layout
+                : LAYOUT_SEQ[i % LAYOUT_SEQ.length];
         const lp = getLayoutProps(layout);
         const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i, colorPrimary, colorAccent);
         const titleAnim = resolveTitleAnim(String(cut.animation || ''), i, layout);
@@ -1021,9 +1071,12 @@ const buildCreatomateInlineSource = (payload) => {
         };
         const elements = [bgElement];
         // ── Overlay layers (Canva-grade gradient treatments) ─────────────────────
-        // isBottom = text at bottom, isTop = text at top
+        // isBottom = text at bottom, isTop/isBillboard = text at top
         const isBottom = layout === 'bottom';
         const isTop = layout === 'top';
+        const isBillboard = layout === 'billboard';
+        // For gradient direction: text at top → dark at top (gradY0='100%', gradY1='0%')
+        //                         text at bottom → dark at bottom (gradY0='0%', gradY1='100%')
         if (layout === 'center') {
             // Cinematic: full gradient overlay darker at bottom, brand-tinted
             elements.push({
@@ -1075,8 +1128,9 @@ const buildCreatomateInlineSource = (payload) => {
         }
         else {
             // bottom / top / billboard — directional gradient overlay (Canva-style)
-            const gradY0 = isTop ? '100%' : '0%'; // gradient start (transparent side)
-            const gradY1 = isTop ? '0%' : '100%'; // gradient end (dark side)
+            // billboard uses same direction as top (text at top → dark at top side)
+            const gradY0 = (isTop || isBillboard) ? '100%' : '0%'; // transparent side
+            const gradY1 = (isTop || isBillboard) ? '0%' : '100%'; // dark side
             // Full-frame vignette (subtle)
             elements.push({
                 type: 'shape', track: 2, time: 0,
@@ -1248,7 +1302,7 @@ const buildCreatomateInlineSource = (payload) => {
             // CTA pill
             elements.push({
                 type: 'text', track: 10, time: 0.65,
-                text: 'プロフィールをチェック  →',
+                text: ctaText,
                 x: '50%', y: isVertical ? '84%' : '80%',
                 x_anchor: '50%', y_anchor: '0%',
                 width: isVertical ? '72%' : '56%',
@@ -1276,7 +1330,8 @@ const buildCreatomateInlineSource = (payload) => {
             track: 90,
             time: 0,
             source: bgmUrl,
-            audio_fade_out: 1.5,
+            duration: calcPayloadDuration(rawCuts),
+            audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05),
         });
     }
     // Invisible brand-colour reference elements (useful for dynamic replacements)
@@ -1289,13 +1344,166 @@ const buildCreatomateInlineSource = (payload) => {
         elements: rootElements,
     };
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// Gradient template builder (フルカラーグラデーション / 写真不要 / テキスト主役)
+// ─────────────────────────────────────────────────────────────────────────────
+const buildGradientInlineSource = (payload) => {
+    const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
+    const dims = (DESTINATION_DIMENSIONS[destination] || [1080, 1920]);
+    const [w, h] = dims;
+    const isVertical = h > w;
+    const colorPrimary = String(payload?.colorPrimary || '#E95464');
+    const colorAccent = String(payload?.colorAccent || '#1c9a8b');
+    const textColor = String(payload?.textColor || '#ffffff');
+    const bgmRaw = String(payload?.bgm || '');
+    const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+    const rawCuts = Array.isArray(payload?.cuts) && payload.cuts.length > 0
+        ? payload.cuts
+        : [{ mainText: String(payload?.telopMain || ''), subText: String(payload?.telopSub || ''), duration: 5 }];
+    // Gradient variations per scene
+    const GRADIENTS = [
+        // 0: diagonal top-left → bottom-right (primary → accent)
+        { fill_x0: '0%', fill_y0: '0%', fill_x1: '100%', fill_y1: '100%', c0: colorPrimary, c1: colorAccent },
+        // 1: diagonal bottom-left → top-right (accent → primary)
+        { fill_x0: '0%', fill_y0: '100%', fill_x1: '100%', fill_y1: '0%', c0: colorAccent, c1: colorPrimary },
+        // 2: vertical (primary dark → accent)
+        { fill_x0: '50%', fill_y0: '0%', fill_x1: '50%', fill_y1: '100%', c0: colorPrimary, c1: colorAccent },
+        // 3: horizontal (accent → primary)
+        { fill_x0: '0%', fill_y0: '50%', fill_x1: '100%', fill_y1: '50%', c0: colorAccent, c1: colorPrimary },
+        // 4: diagonal opposite
+        { fill_x0: '100%', fill_y0: '0%', fill_x1: '0%', fill_y1: '100%', c0: colorPrimary, c1: colorAccent },
+        // 5: vertical reversed
+        { fill_x0: '50%', fill_y0: '100%', fill_x1: '50%', fill_y1: '0%', c0: colorAccent, c1: colorPrimary },
+    ];
+    const TITLE_ANIMS = [
+        [{ type: 'text-slide', direction: 'up', duration: 0.7, easing: 'back-out' }],
+        [{ type: 'scale', start_scale: '60%', end_scale: '100%', fade: true, duration: 0.8, easing: 'elastic-out' }],
+        [{ type: 'spin', rotation: '-14°', fade: true, duration: 0.75, easing: 'back-out' }],
+        [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
+        [{ type: 'slide', direction: 'up', distance: '12%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+        [{ type: 'scale', start_scale: '72%', end_scale: '100%', fade: true, duration: 0.75, easing: 'elastic-out' }],
+    ];
+    const scenes = rawCuts.slice(0, 8).map((cut, i) => {
+        const dur = Number(cut.duration || cut.durationSec || 5);
+        const mainText = String(cut.mainText || cut.title || cut.textMain || '');
+        const subText = String(cut.subText || cut.subtitle || cut.textSub || '');
+        const imgUrl = String(cut.imageUrl || '').trim();
+        const hasImg = imgUrl.startsWith('http');
+        const timeStart = rawCuts.slice(0, i).reduce((acc, c) => acc + Number(c.duration || 5), 0);
+        const grad = GRADIENTS[i % GRADIENTS.length];
+        const elements = [];
+        // ── Gradient background ───────────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 1, time: 0,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_mode: 'linear',
+            fill_color: [{ offset: 0, color: grad.c0 }, { offset: 1, color: grad.c1 }],
+            fill_x0: grad.fill_x0, fill_y0: grad.fill_y0,
+            fill_x1: grad.fill_x1, fill_y1: grad.fill_y1,
+            width: '100%', height: '100%',
+        });
+        // ── Optional: overlay image with opacity (if available) ──────────────────
+        if (hasImg) {
+            elements.push({
+                type: 'image', track: 2, time: 0, source: imgUrl, dynamic: true,
+                width: '100%', height: '100%', x_anchor: '50%', y_anchor: '50%',
+                fill_mode: 'cover', opacity: 0.18,
+                ...resolveKenBurns(i, dur),
+            });
+        }
+        // ── Large decorative geometric: top-right circle accent ──────────────────
+        elements.push({
+            type: 'shape', track: 3, time: 0,
+            path: 'M 50 0 A 50 50 0 1 1 49.9999 0 Z', // circle
+            fill_color: 'rgba(255,255,255,0.08)',
+            width: isVertical ? '80%' : '60%', height: isVertical ? '42%' : '60%',
+            x: '90%', y: '-5%', x_anchor: '50%', y_anchor: '50%',
+        });
+        // ── Bottom decorative circle ───────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 4, time: 0,
+            path: 'M 50 0 A 50 50 0 1 1 49.9999 0 Z',
+            fill_color: 'rgba(255,255,255,0.06)',
+            width: isVertical ? '55%' : '40%', height: isVertical ? '28%' : '40%',
+            x: '10%', y: '105%', x_anchor: '50%', y_anchor: '50%',
+        });
+        // ── Horizontal accent line (wipe reveal) ─────────────────────────────────
+        elements.push({
+            type: 'shape', track: 5, time: 0.2,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: 'rgba(255,255,255,0.30)',
+            width: isVertical ? '28%' : '20%', height: '0.5 vmin',
+            x: '50%', y: isVertical ? '41%' : '39%', x_anchor: '50%', y_anchor: '50%',
+            animations: [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
+        });
+        // ── Scene counter top-right ───────────────────────────────────────────────
+        elements.push({
+            type: 'text', track: 6, time: 0.1,
+            text: String(i + 1).padStart(2, '0'),
+            x: isVertical ? '88%' : '92%', y: '6%',
+            x_anchor: '50%', y_anchor: '50%',
+            font_family: 'Noto Sans JP',
+            font_size: '2.5 vmin', font_weight: '100',
+            fill_color: 'rgba(255,255,255,0.40)',
+            letter_spacing: 2,
+            animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+        });
+        // ── Main title ───────────────────────────────────────────────────────────
+        if (mainText) {
+            elements.push({
+                type: 'text', track: 7, time: 0.28,
+                text: mainText, dynamic: true,
+                x: '50%', y: isVertical ? '46%' : '44%',
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '86%' : '78%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '8 vmin' : '7 vmin',
+                font_weight: '900', fill_color: textColor,
+                letter_spacing: 4, text_align: 'center', line_height: 1.15,
+                shadow_color: 'rgba(0,0,0,0.25)', shadow_blur: 10, shadow_x: 0, shadow_y: 4,
+                animations: TITLE_ANIMS[i % TITLE_ANIMS.length],
+            });
+        }
+        // ── Subtitle ─────────────────────────────────────────────────────────────
+        if (subText) {
+            elements.push({
+                type: 'text', track: 8, time: 0.48,
+                text: subText, dynamic: true,
+                x: '50%', y: isVertical ? '58%' : '56%',
+                x_anchor: '50%', y_anchor: '50%',
+                width: isVertical ? '74%' : '66%',
+                font_family: 'Noto Sans JP',
+                font_size: isVertical ? '3.2 vmin' : '2.8 vmin',
+                font_weight: '300', fill_color: 'rgba(255,255,255,0.85)',
+                letter_spacing: 3, text_align: 'center',
+                animations: [{ type: 'slide', direction: 'up', distance: '5%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+            });
+        }
+        // ── Bottom accent line ────────────────────────────────────────────────────
+        elements.push({
+            type: 'shape', track: 9, time: 0.4,
+            path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+            fill_color: 'rgba(255,255,255,0.30)',
+            width: isVertical ? '28%' : '20%', height: '0.5 vmin',
+            x: '50%', y: isVertical ? '63%' : '61%', x_anchor: '50%', y_anchor: '50%',
+            animations: [{ type: 'wipe', direction: 'left', duration: 0.65, easing: 'quadratic-out' }],
+        });
+        const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i, colorPrimary, colorAccent);
+        return { type: 'composition', track: i + 1, time: timeStart, duration: dur, animations, exit_animations, elements };
+    });
+    const rootElements = [...scenes];
+    if (bgmUrl)
+        rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, duration: calcPayloadDuration(rawCuts), audio_fade_out: Math.min(1.5, calcPayloadDuration(rawCuts) * 0.05) });
+    return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
+};
 const renderCreatomateJob = async (_req, job) => {
     const payload = (job.payload || {});
     const style = String(payload?.style || 'standard');
     const source = style === 'collage' ? buildCollageInlineSource(payload)
         : style === 'magazine' ? buildMagazineInlineSource(payload)
-            : style === 'minimal' ? buildMinimalInlineSource(payload)
-                : buildCreatomateInlineSource(payload);
+            : style === 'gradient' ? buildGradientInlineSource(payload)
+                : style === 'minimal' ? buildMinimalInlineSource(payload)
+                    : buildCreatomateInlineSource(payload);
     const bodyJson = JSON.stringify({ source });
     console.log('[pal-db] creatomate render request', {
         jobId: job.id,
@@ -1321,7 +1529,9 @@ const renderCreatomateJob = async (_req, job) => {
         errorData: response.ok ? undefined : JSON.stringify(data),
     });
     if (!response.ok) {
-        throw new Error((Array.isArray(data) ? data[0]?.message : data?.message) || 'creatomate render failed');
+        const errData = Array.isArray(data) ? data[0] : data;
+        const errMsg = errData?.message || errData?.hint || errData?.error || JSON.stringify(errData) || 'creatomate render failed';
+        throw new Error(`Creatomate ${response.status}: ${errMsg}`);
     }
     const renderItem = Array.isArray(data) ? data[0] : data;
     const renderId = String(renderItem?.id || '').trim();
@@ -1696,8 +1906,9 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
         const style = String(payload?.style || 'standard');
         const source = style === 'collage' ? buildCollageInlineSource(payload)
             : style === 'magazine' ? buildMagazineInlineSource(payload)
-                : style === 'minimal' ? buildMinimalInlineSource(payload)
-                    : buildCreatomateInlineSource(payload);
+                : style === 'gradient' ? buildGradientInlineSource(payload)
+                    : style === 'minimal' ? buildMinimalInlineSource(payload)
+                        : buildCreatomateInlineSource(payload);
         const bodyJson = JSON.stringify({ source });
         // Creatomateへの実際送信テスト
         let creatomateStatus = null;
@@ -1733,19 +1944,74 @@ app.post('/api/pal-video/debug-source', async (req, res) => {
         return res.status(500).json({ success: false, error: message });
     }
 });
+// ── FFmpeg render helper ──────────────────────────────────────────────────────
+const renderWithFFmpegAndSave = async (job, host, preview = false) => {
+    const payload = (job.payload || {});
+    const startedAt = Date.now();
+    // 最初に「開始中」進捗をDBに書いておく（onProgress より前に確実に書く）
+    await upsertPalVideoJob({
+        id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+        status: 'レンダリング中',
+        payload: { ...payload, renderProgress: { step: 'clip', current: 0, total: 1, label: '開始中...' }, renderStartedAt: startedAt },
+        previewUrl: null, youtubeUrl: job.youtubeUrl,
+    }).catch((e) => console.error('[pal-db] initial progress write failed:', e));
+    const filePath = await renderWithFFmpeg(payload, job.id, async (progress) => {
+        // カット完了ごとにDBの payload.renderProgress を更新
+        console.log(`[pal-db] onProgress job=${job.id}`, JSON.stringify(progress));
+        await upsertPalVideoJob({
+            id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+            status: 'レンダリング中',
+            payload: { ...payload, renderProgress: progress, renderStartedAt: startedAt },
+            previewUrl: null, youtubeUrl: job.youtubeUrl,
+        }).catch((e) => console.error('[pal-db] onProgress DB write failed:', e));
+    }, preview);
+    // Public URL served by this Express server (タイムスタンプでキャッシュ無効化)
+    const previewUrl = `${host}/api/pal-video/files/${job.id}?t=${Date.now()}`;
+    const updated = await upsertPalVideoJob({
+        id: job.id,
+        paletteId: job.paletteId,
+        planCode: job.planCode,
+        status: '確認中',
+        payload: { ...payload },
+        previewUrl,
+        youtubeUrl: job.youtubeUrl,
+    });
+    return { updated, previewUrl };
+};
+// バックグラウンドレンダー共通ハンドラ
+const startBackgroundRender = (job, host, preview = false) => {
+    setImmediate(async () => {
+        try {
+            // 初期ステータスをここで await して書く（fire-and-forgetにすると onProgress 書き込みと競合する）
+            await upsertPalVideoJob({ id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+                status: 'レンダリング中', payload: job.payload, previewUrl: null, youtubeUrl: job.youtubeUrl,
+            }).catch(() => { });
+            const { previewUrl } = await renderWithFFmpegAndSave(job, host, preview);
+            console.log('[pal-db] render complete:', job.id, previewUrl);
+        }
+        catch (err) {
+            console.error('[pal-db] background render failed:', job.id, err);
+            await upsertPalVideoJob({ id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+                status: 'エラー', payload: { ...job.payload, renderError: err.message },
+                previewUrl: null, youtubeUrl: job.youtubeUrl, }).catch(() => { });
+        }
+    });
+};
 app.post('/api/pal-video/generate', async (req, res) => {
     try {
-        if (!CREATOMATE_API_KEY) {
-            return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
-        }
         const jobId = String(req.body?.jobId || '').trim();
         if (!jobId)
             return res.status(400).json({ success: false, error: 'jobId is required' });
         const job = await getPalVideoJob(jobId);
         if (!job)
             return res.status(404).json({ success: false, error: 'job not found' });
-        const result = await renderCreatomateJob(req, job);
-        return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
+        // OOMクラッシュ等でスタックしたジョブも含め、常に再起動する
+        if (job.status === 'レンダリング中') {
+            console.log('[pal-db] restarting stuck/existing rendering job:', job.id);
+        }
+        const host = getPublicBaseUrl(req);
+        startBackgroundRender(job, host, true); // preview=true: 半解像度で高速生成
+        return res.json({ success: true, status: 'rendering', jobId: job.id });
     }
     catch (error) {
         console.error('[pal-db] pal-video generate failed', error);
@@ -1755,22 +2021,55 @@ app.post('/api/pal-video/generate', async (req, res) => {
 });
 app.post('/api/pal-video/render', async (req, res) => {
     try {
-        if (!CREATOMATE_API_KEY) {
-            return res.status(500).json({ success: false, error: 'CREATOMATE_API_KEY is missing' });
-        }
         const jobId = String(req.body?.jobId || '').trim();
         if (!jobId)
             return res.status(400).json({ success: false, error: 'jobId is required' });
         const job = await getPalVideoJob(jobId);
         if (!job)
             return res.status(404).json({ success: false, error: 'job not found' });
-        const result = await renderCreatomateJob(req, job);
-        return res.json({ success: true, job: result.updated, renderId: result.renderId, previewUrl: result.previewUrl });
+        // OOMクラッシュ等でスタックしたジョブも含め、常に再起動する
+        if (job.status === 'レンダリング中') {
+            console.log('[pal-db] restarting stuck/existing rendering job:', job.id);
+        }
+        const host = getPublicBaseUrl(req);
+        startBackgroundRender(job, host);
+        return res.json({ success: true, status: 'rendering', jobId: job.id });
     }
     catch (error) {
         console.error('[pal-db] pal-video render failed', error);
         const message = error instanceof Error ? error.message : 'failed to render pal_video';
         return res.status(500).json({ success: false, error: message });
+    }
+});
+// ── 生成済み MP4 ファイル配信 (Range request 対応) ────────────────────────────
+app.get('/api/pal-video/files/:jobId', async (req, res) => {
+    const jobId = String(req.params.jobId || '').replace(/[^a-zA-Z0-9_\-]/g, '');
+    const filePath = `${DATA_DIR}/${jobId}_output.mp4`;
+    try {
+        const stat = await fs.stat(filePath);
+        const fileSize = stat.size;
+        const rangeHeader = req.headers['range'];
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Disposition', `inline; filename="video-${jobId}.mp4"`);
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        if (rangeHeader) {
+            const parts = rangeHeader.replace(/bytes=/, '').split('-');
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const chunkSize = end - start + 1;
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+            res.setHeader('Content-Length', chunkSize);
+            createReadStream(filePath, { start, end }).pipe(res);
+        }
+        else {
+            res.setHeader('Content-Length', fileSize);
+            createReadStream(filePath).pipe(res);
+        }
+    }
+    catch {
+        res.status(404).json({ success: false, error: 'file not found — re-render to regenerate' });
     }
 });
 app.post('/api/service-subscriptions', async (req, res) => {
@@ -1965,6 +2264,25 @@ app.delete('/api/pal-opt-posts/:id', async (req, res) => {
 app.listen(port, async () => {
     try {
         await ensureTables();
+        // サーバー再起動時: 前回レンダリング中だったジョブを draft に戻す
+        // （エラーにせず再レンダリング可能な状態にする）
+        try {
+            const { sql } = await import('@vercel/postgres');
+            const stuck = await sql `
+        UPDATE pal_video_jobs
+        SET status = 'draft',
+            payload = payload - 'renderProgress' - 'renderError',
+            updated_at = NOW()
+        WHERE status = 'レンダリング中'
+        RETURNING id
+      `;
+            if (stuck.rowCount && stuck.rowCount > 0) {
+                console.log(`[pal-db] reset ${stuck.rowCount} interrupted rendering job(s) to draft — ready to re-render`);
+            }
+        }
+        catch (e) {
+            console.warn('[pal-db] startup cleanup warning:', e);
+        }
         console.log(`[pal-db] running on http://localhost:${port}`);
     }
     catch (error) {

@@ -2091,7 +2091,16 @@ app.post('/api/pal-video/debug-source', async (req: Request, res: Response) => {
 // ── FFmpeg render helper ──────────────────────────────────────────────────────
 const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ updated: any; previewUrl: string }> => {
   const payload = (job.payload || {}) as Record<string, unknown>;
-  const filePath = await renderWithFFmpeg(payload, job.id);
+
+  const filePath = await renderWithFFmpeg(payload, job.id, async (progress) => {
+    // カット完了ごとにDBの payload.renderProgress を更新
+    await upsertPalVideoJob({
+      id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+      status: 'レンダリング中',
+      payload: { ...payload, renderProgress: progress },
+      previewUrl: null, youtubeUrl: job.youtubeUrl,
+    }).catch(() => {});
+  });
 
   // Public URL served by this Express server
   const previewUrl = `${host}/api/pal-video/files/${job.id}`;

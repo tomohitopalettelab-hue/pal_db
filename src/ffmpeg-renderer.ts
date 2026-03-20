@@ -264,9 +264,17 @@ const renderClip = async (
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
+export type RenderProgress = {
+  step: 'clip' | 'concat' | 'bgm' | 'done';
+  current: number;   // 完了したカット数 (clip時)
+  total: number;     // 総カット数
+  label: string;     // 表示ラベル
+};
+
 export const renderWithFFmpeg = async (
   payload: Record<string, unknown>,
   jobId: string,
+  onProgress?: (p: RenderProgress) => void,
 ): Promise<string> => {
   await fs.mkdir(TMP, { recursive: true });
 
@@ -293,13 +301,16 @@ export const renderWithFFmpeg = async (
     }));
 
   if (rawCuts.length === 0) throw new Error('cuts が空です');
+  const total = rawCuts.length;
 
   // ── 1. Render clips sequentially ──────────────────────────────────────────
   const clipPaths: string[] = [];
   for (let i = 0; i < rawCuts.length; i++) {
-    console.log(`[ffmpeg] cut ${i + 1}/${rawCuts.length}…`);
+    console.log(`[ffmpeg] cut ${i + 1}/${total}…`);
+    onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
     const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg);
     clipPaths.push(p);
+    onProgress?.({ step: 'clip', current: i + 1, total, label: `カット ${i + 1} / ${total} 完了` });
   }
 
   // ── 2. Concat with xfade transitions ──────────────────────────────────────
@@ -329,6 +340,7 @@ export const renderWithFFmpeg = async (
       `-filter_complex "${filterParts.replace(/;$/, '')}" -map "[vout]" ` +
       `-c:v libx264 -preset fast -crf 20 -r 30 -an "${concatPath}"`;
 
+    onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concatenating…');
     await execAsync(cmd, { timeout: 180000 });
   }
@@ -339,6 +351,7 @@ export const renderWithFFmpeg = async (
   if (bgmUrl) {
     const bgmPath = `${TMP}/${jobId}_bgm.mp3`;
     try {
+      onProgress?.({ step: 'bgm', current: total, total, label: 'BGMを追加中...' });
       await downloadFile(bgmUrl, bgmPath);
       const totalDur = rawCuts.reduce((a, c) => a + c.duration, 0) - TRANS_DUR * (rawCuts.length - 1);
       const fadeStart = Math.max(0, totalDur - 1.5);

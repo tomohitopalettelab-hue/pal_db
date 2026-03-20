@@ -2094,12 +2094,13 @@ const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ update
 
   const filePath = await renderWithFFmpeg(payload, job.id, async (progress) => {
     // カット完了ごとにDBの payload.renderProgress を更新
+    console.log(`[pal-db] onProgress job=${job.id}`, JSON.stringify(progress));
     await upsertPalVideoJob({
       id: job.id, paletteId: job.paletteId, planCode: job.planCode,
       status: 'レンダリング中',
       payload: { ...payload, renderProgress: progress },
       previewUrl: null, youtubeUrl: job.youtubeUrl,
-    }).catch(() => {});
+    }).catch((e) => console.error('[pal-db] onProgress DB write failed:', e));
   });
 
   // Public URL served by this Express server
@@ -2147,9 +2148,14 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
-    // 既にレンダリング中なら重複起動を防ぐ
+    // 既にレンダリング中の場合、5分以内に更新があれば重複起動を防ぐ
+    // 5分以上更新がなければサーバー再起動等でスタックしたと判断して再起動
     if (job.status === 'レンダリング中') {
-      return res.json({ success: true, status: 'rendering', jobId: job.id });
+      const lastUpdate = new Date(job.updatedAt || 0).getTime();
+      if (Date.now() - lastUpdate < 5 * 60 * 1000) {
+        return res.json({ success: true, status: 'rendering', jobId: job.id });
+      }
+      console.log('[pal-db] stale rendering job, restarting:', job.id);
     }
 
     const host = `${req.protocol}://${req.get('host')}`;
@@ -2170,9 +2176,14 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
-    // 既にレンダリング中なら重複起動を防ぐ
+    // 既にレンダリング中の場合、5分以内に更新があれば重複起動を防ぐ
+    // 5分以上更新がなければサーバー再起動等でスタックしたと判断して再起動
     if (job.status === 'レンダリング中') {
-      return res.json({ success: true, status: 'rendering', jobId: job.id });
+      const lastUpdate = new Date(job.updatedAt || 0).getTime();
+      if (Date.now() - lastUpdate < 5 * 60 * 1000) {
+        return res.json({ success: true, status: 'rendering', jobId: job.id });
+      }
+      console.log('[pal-db] stale rendering job, restarting:', job.id);
     }
 
     const host = `${req.protocol}://${req.get('host')}`;

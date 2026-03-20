@@ -344,8 +344,9 @@ export const renderWithFFmpeg = async (
 
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concat demuxer (preview)…');
-    const cmd = `"${ffmpeg}" -y -f concat -safe 0 -i "${listPath}" -c copy "${concatPath}"`;
-    await execAsync(cmd, { timeout: 60000 });
+    // -c copy はタイムスタンプがズレるため再エンコード（ultrafast で高速）
+    const cmd = `"${ffmpeg}" -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -preset ultrafast -crf 26 -r 30 -an "${concatPath}"`;
+    await execAsync(cmd, { timeout: 120000 });
     await fs.unlink(listPath).catch(() => {});
   } else {
     // 最終: xfade トランジション付き結合

@@ -210,11 +210,16 @@ const renderClip = async (
   w: number, h: number,
   colorPrimary: string, colorAccent: string,
   font: string, ffmpeg: string,
+  preview = false,
 ): Promise<string> => {
   const dur = cut.duration;
   const frames = Math.ceil(dur * 30);
   const clipPath = `${TMP}/${jobId}_clip_${index}.mp4`;
   const fadeDur = Math.min(0.35, dur * 0.08);
+
+  // プレビュー時は半解像度
+  const pw = preview ? Math.round(w / 2) : w;
+  const ph = preview ? Math.round(h / 2) : h;
 
   let inputPart: string;
   let vfBase: string;
@@ -229,23 +234,22 @@ const renderClip = async (
     }
 
     if (cut.imageUrl) {
-      // Ken Burns: ゆっくりズームイン（高品質・時間かかる）
+      // Ken Burns: ゆっくりズームイン（プレビューも最終も同じ動き、解像度のみ異なる）
       const zoom = `min(zoom+0.0012,1.08)`;
       inputPart = `-loop 1 -t ${dur + 1} -i "${imgPath}"`;
-      vfBase = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},` +
-               `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30,` +
+      vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},` +
+               `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${pw}x${ph}:fps=30,` +
                `trim=duration=${dur},setpts=PTS-STARTPTS`;
     } else {
-      inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${w}x${h}:r=30"`;
+      inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30"`;
       vfBase = `[0:v]format=yuv420p`;
     }
   } else {
-    // Gradient-style: solid primary with accent overlay band
-    inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${w}x${h}:r=30"`;
+    inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30"`;
     vfBase = `[0:v]format=yuv420p`;
   }
 
-  const txt = textFilter(cut.mainText, cut.subText, cut.layout, w, h, font);
+  const txt = textFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font);
   const fadeOut = dur - fadeDur;
   const filters = [
     vfBase,
@@ -255,8 +259,10 @@ const renderClip = async (
     `fade=t=out:st=${fadeOut}:d=${fadeDur}`,
   ].join(',');
 
+  const preset = preview ? 'veryfast' : 'fast';
+  const crf    = preview ? 26 : 20;
   const cmd = `"${ffmpeg}" -y ${inputPart} -filter_complex "${filters}" ` +
-    `-c:v libx264 -preset fast -crf 20 -r 30 -an "${clipPath}"`;
+    `-c:v libx264 -preset ${preset} -crf ${crf} -r 30 -an "${clipPath}"`;
 
   await execAsync(cmd, { timeout: 600000 });
   return clipPath;
@@ -275,14 +281,18 @@ export const renderWithFFmpeg = async (
   payload: Record<string, unknown>,
   jobId: string,
   onProgress?: (p: RenderProgress) => Promise<void> | void,
+  preview = false,
 ): Promise<string> => {
   await fs.mkdir(TMP, { recursive: true });
 
   const [font, ffmpeg] = await Promise.all([ensureFont(), getFFmpegBin()]);
-  console.log(`[ffmpeg] bin=${ffmpeg}, font=${font}`);
+  console.log(`[ffmpeg] bin=${ffmpeg}, font=${font}, preview=${preview}`);
 
   const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
-  const [w, h] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
+  const [fw, fh] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
+  // プレビューは半解像度（ピクセル数1/4でzoompanが大幅高速化）
+  const w = preview ? Math.round(fw / 2) : fw;
+  const h = preview ? Math.round(fh / 2) : fh;
   const colorPrimary = String(payload?.colorPrimary || '#1A1A2E');
   const colorAccent  = String(payload?.colorAccent  || '#E95464');
   const bgmKey       = String(payload?.bgm           || '');
@@ -308,7 +318,7 @@ export const renderWithFFmpeg = async (
   for (let i = 0; i < rawCuts.length; i++) {
     console.log(`[ffmpeg] cut ${i + 1}/${total}…`);
     await onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
-    const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg);
+    const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg, preview);
     clipPaths.push(p);
     await onProgress?.({ step: 'clip', current: i + 1, total, label: `カット ${i + 1} / ${total} 完了` });
   }

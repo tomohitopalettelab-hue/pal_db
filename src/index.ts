@@ -2089,7 +2089,7 @@ app.post('/api/pal-video/debug-source', async (req: Request, res: Response) => {
 });
 
 // ── FFmpeg render helper ──────────────────────────────────────────────────────
-const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ updated: any; previewUrl: string }> => {
+const renderWithFFmpegAndSave = async (job: any, host: string, preview = false): Promise<{ updated: any; previewUrl: string }> => {
   const payload = (job.payload || {}) as Record<string, unknown>;
 
   const filePath = await renderWithFFmpeg(payload, job.id, async (progress) => {
@@ -2101,7 +2101,7 @@ const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ update
       payload: { ...payload, renderProgress: progress },
       previewUrl: null, youtubeUrl: job.youtubeUrl,
     }).catch((e) => console.error('[pal-db] onProgress DB write failed:', e));
-  });
+  }, preview);
 
   // Public URL served by this Express server
   const previewUrl = `${host}/api/pal-video/files/${job.id}`;
@@ -2120,7 +2120,7 @@ const renderWithFFmpegAndSave = async (job: any, host: string): Promise<{ update
 };
 
 // バックグラウンドレンダー共通ハンドラ
-const startBackgroundRender = (job: any, host: string) => {
+const startBackgroundRender = (job: any, host: string, preview = false) => {
   setImmediate(async () => {
     try {
       // 初期ステータスをここで await して書く（fire-and-forgetにすると onProgress 書き込みと競合する）
@@ -2128,7 +2128,7 @@ const startBackgroundRender = (job: any, host: string) => {
         status: 'レンダリング中', payload: job.payload, previewUrl: null, youtubeUrl: job.youtubeUrl,
       }).catch(() => {});
 
-      const { previewUrl } = await renderWithFFmpegAndSave(job, host);
+      const { previewUrl } = await renderWithFFmpegAndSave(job, host, preview);
       console.log('[pal-db] render complete:', job.id, previewUrl);
     } catch (err) {
       console.error('[pal-db] background render failed:', job.id, err);
@@ -2159,7 +2159,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     }
 
     const host = `${req.protocol}://${req.get('host')}`;
-    startBackgroundRender(job, host);
+    startBackgroundRender(job, host, true); // preview=true: 半解像度で高速生成
     return res.json({ success: true, status: 'rendering', jobId: job.id });
   } catch (error) {
     console.error('[pal-db] pal-video generate failed', error);

@@ -84,7 +84,8 @@ const BGM_URLS: Record<string, string> = {
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 const esc = (s: string) =>
-  s.replace(/\\/g, '\\\\')
+  s.replace(/\n|\r/g, ' ')
+   .replace(/\\/g, '\\\\')
    .replace(/'/g, "\u2019")   // smart apostrophe avoids quote issues
    .replace(/:/g, '\\:')
    .replace(/\[/g, '\\[')

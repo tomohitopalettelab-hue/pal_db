@@ -351,11 +351,11 @@ const resolveTitleAnim = (animation: string, idx: number, layout: string): any[]
   if (a === 'zoom')       return [{ type: 'scale', start_scale: '82%', end_scale: '100%', fade: true, duration: 0.7, easing: 'back-out' }];
   if (a === 'pop')        return [{ type: 'scale', start_scale: '68%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }];
   if (a === 'elastic')    return [{ type: 'scale', start_scale: '55%', end_scale: '100%', fade: true, duration: 0.85, easing: 'elastic-out' }];
-  if (a === 'blur')       return [{ type: 'blur',  blur: 28, fade: true, duration: 0.75, easing: 'quadratic-out' }];
+  if (a === 'blur')       return [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.85, easing: 'quadratic-out' }]; // blur→scale+fade (blur unsupported on text)
   if (a === 'wipe')       return [{ type: 'wipe',  direction: 'right', duration: 0.65, easing: 'quadratic-out' }];
   if (a === 'rise')       return [{ type: 'slide', direction: 'up', distance: '22%', fade: true, duration: 0.75, easing: 'quadratic-out' }];
   if (a === 'drop')       return [{ type: 'slide', direction: layout === 'top' || layout === 'billboard' ? 'down' : 'up', distance: '15%', fade: true, duration: 0.65, easing: 'back-out' }];
-  if (a === 'typewriter') return [{ type: 'typewriter', duration: 0.8, split: 'character' }];
+  if (a === 'typewriter') return [{ type: 'text-typewriter', duration: 0.8 }];
   if (a === 'text-slide') return [{ type: 'text-slide', direction: 'up', duration: 0.65, easing: 'back-out' }];
   if (a === 'spin')       return [{ type: 'spin', rotation: '-12°', fade: true, duration: 0.7, easing: 'back-out' }];
 
@@ -367,7 +367,7 @@ const resolveTitleAnim = (animation: string, idx: number, layout: string): any[]
     [{ type: 'slide', direction: 'left', distance: '10%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
     [{ type: 'scale', start_scale: '85%', end_scale: '100%', fade: true, duration: 0.65, easing: 'back-out' }],
     [{ type: 'wipe',  direction: 'right', duration: 0.65, easing: 'quadratic-out' }],
-    [{ type: 'blur',  blur: 24, fade: true, duration: 0.7, easing: 'quadratic-out' }],
+    [{ type: 'scale', start_scale: '92%', end_scale: '100%', fade: true, duration: 0.75, easing: 'quadratic-out' }], // was blur
     [{ type: 'slide', direction: 'right', distance: '10%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
     [{ type: 'scale', start_scale: '58%', end_scale: '100%', fade: true, duration: 0.8, easing: 'elastic-out' }],
     [{ type: 'spin',  rotation: '-10°', fade: true, duration: 0.65, easing: 'back-out' }],
@@ -385,7 +385,7 @@ const resolveTitleAnim = (animation: string, idx: number, layout: string): any[]
 const resolveSubAnim = (animation: string, idx: number): any[] => {
   const a = String(animation || '').toLowerCase();
   if (a === 'none')    return [];
-  if (a === 'blur')    return [{ type: 'blur',  blur: 16, fade: true, duration: 0.7, easing: 'quadratic-out' }];
+  if (a === 'blur')    return [{ type: 'scale', start_scale: '95%', end_scale: '100%', fade: true, duration: 0.7, easing: 'quadratic-out' }]; // blur→scale+fade
   if (a === 'zoom')    return [{ type: 'scale', start_scale: '88%', end_scale: '100%', fade: true, duration: 0.6, easing: 'back-out' }];
   if (a === 'pop')     return [{ type: 'scale', start_scale: '80%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }];
   if (a === 'elastic') return [{ type: 'scale', start_scale: '72%', end_scale: '100%', fade: true, duration: 0.65, easing: 'elastic-out' }];
@@ -396,12 +396,12 @@ const resolveSubAnim = (animation: string, idx: number): any[] => {
   const SUB_AUTO: any[][] = [
     [{ type: 'slide', direction: 'up',    distance: '8%',  fade: true, duration: 0.55, easing: 'quadratic-out' }],
     [{ type: 'fade',  duration: 0.7, easing: 'quadratic-out' }],
-    [{ type: 'blur',  blur: 12, fade: true, duration: 0.6, easing: 'quadratic-out' }],
+    [{ type: 'scale', start_scale: '93%', end_scale: '100%', fade: true, duration: 0.6, easing: 'quadratic-out' }], // was blur
     [{ type: 'slide', direction: 'left',  distance: '6%',  fade: true, duration: 0.55, easing: 'quadratic-out' }],
     [{ type: 'scale', start_scale: '90%', end_scale: '100%', fade: true, duration: 0.55, easing: 'back-out' }],
     [{ type: 'wipe',  direction: 'right', duration: 0.55, easing: 'quadratic-out' }],
     [{ type: 'slide', direction: 'right', distance: '6%',  fade: true, duration: 0.55, easing: 'quadratic-out' }],
-    [{ type: 'blur',  blur: 8, fade: true, duration: 0.5, easing: 'quadratic-out' }],
+    [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.5, easing: 'back-out' }],    // was blur
   ];
   return SUB_AUTO[idx % SUB_AUTO.length];
 };
@@ -890,7 +890,7 @@ const buildMinimalInlineSource = (payload: Record<string, unknown>) => {
       [{ type: 'slide', direction: 'up', distance: '4%', fade: true, duration: 0.8, easing: 'quadratic-out' }],
       [{ type: 'scale', start_scale: '94%', end_scale: '100%', fade: true, duration: 1.0, easing: 'quadratic-out' }],
       [{ type: 'wipe',  direction: 'right', duration: 0.9, easing: 'quadratic-out' }],
-      [{ type: 'blur',  blur: 18, fade: true, duration: 0.9, easing: 'quadratic-out' }],
+      [{ type: 'scale', start_scale: '96%', end_scale: '100%', fade: true, duration: 0.9, easing: 'quadratic-out' }],
       [{ type: 'slide', direction: 'up', distance: '3%', fade: true, duration: 0.9, easing: 'quadratic-out' }],
     ];
     const MINIMAL_SUB_ANIMS: any[][] = [

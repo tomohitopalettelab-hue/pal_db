@@ -304,9 +304,9 @@ const renderClip = async (
   const clipPath = `${TMP}/${jobId}_clip_${index}.mp4`;
   const fadeDur = Math.min(0.35, dur * 0.08);
 
-  // プレビュー時は半解像度
-  const pw = preview ? Math.round(w / 2) : w;
-  const ph = preview ? Math.round(h / 2) : h;
+  // 解像度は renderWithFFmpeg 側で preview/final を切り替え済み → ここでは使用
+  const pw = w;
+  const ph = h;
 
   let inputPart: string;
   let vfBase: string;
@@ -360,10 +360,11 @@ const renderClip = async (
 
   const preset = preview ? 'veryfast' : 'fast';
   const crf    = preview ? 26 : 20;
-  const cmd = `"${ffmpeg}" -y ${inputPart} -filter_complex "${filterChain.join(',')}" ` +
-    `-c:v libx264 -preset ${preset} -crf ${crf} -r 30 -an "${clipPath}"`;
+  const cmd = `"${ffmpeg}" -y -loglevel error ${inputPart} -filter_complex "${filterChain.join(',')}" ` +
+    `-c:v libx264 -preset ${preset} -crf ${crf} -r 30 -threads 2 -an "${clipPath}"`;
 
-  await execAsync(cmd, { timeout: 600000 });
+  console.log(`[ffmpeg] clip ${index} cmd:`, cmd.slice(0, 200));
+  await execAsync(cmd, { timeout: 600000, maxBuffer: 50 * 1024 * 1024 });
   return clipPath;
 };
 
@@ -451,8 +452,8 @@ export const renderWithFFmpeg = async (
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concat demuxer (preview)…');
     // -c copy はタイムスタンプがズレるため再エンコード（ultrafast で高速）
-    const cmd = `"${ffmpeg}" -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -preset ultrafast -crf 26 -r 30 -an "${concatPath}"`;
-    await execAsync(cmd, { timeout: 120000 });
+    const cmd = `"${ffmpeg}" -y -loglevel error -f concat -safe 0 -i "${listPath}" -c:v libx264 -preset ultrafast -crf 26 -r 30 -threads 2 -an "${concatPath}"`;
+    await execAsync(cmd, { timeout: 120000, maxBuffer: 50 * 1024 * 1024 });
     await fs.unlink(listPath).catch(() => {});
   } else {
     // 最終: xfade トランジション付き結合
@@ -472,13 +473,13 @@ export const renderWithFFmpeg = async (
       currentStream = outLabel;
     }
 
-    const cmd = `"${ffmpeg}" -y ${inputArgs} ` +
+    const cmd = `"${ffmpeg}" -y -loglevel error ${inputArgs} ` +
       `-filter_complex "${filterParts.replace(/;$/, '')}" -map "[vout]" ` +
-      `-c:v libx264 -preset fast -crf 20 -r 30 -an "${concatPath}"`;
+      `-c:v libx264 -preset fast -crf 20 -r 30 -threads 2 -an "${concatPath}"`;
 
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
     console.log('[ffmpeg] concatenating with xfade…');
-    await execAsync(cmd, { timeout: 300000 });
+    await execAsync(cmd, { timeout: 300000, maxBuffer: 50 * 1024 * 1024 });
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────
@@ -498,7 +499,7 @@ export const renderWithFFmpeg = async (
         `-map 0:v -map "[a]" -c:v copy -c:a aac -b:a 128k -shortest "${outputPath}"`;
 
       console.log('[ffmpeg] adding BGM…');
-      await execAsync(cmd, { timeout: 60000 });
+      await execAsync(cmd, { timeout: 60000, maxBuffer: 50 * 1024 * 1024 });
     } catch (e) {
       console.warn('[ffmpeg] BGM failed, using video-only:', (e as Error).message);
       await fs.copyFile(concatPath, outputPath);

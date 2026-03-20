@@ -212,6 +212,7 @@ const renderClip = async (
   font: string, ffmpeg: string,
 ): Promise<string> => {
   const dur = cut.duration;
+  const frames = Math.ceil(dur * 30);
   const clipPath = `${TMP}/${jobId}_clip_${index}.mp4`;
   const fadeDur = Math.min(0.35, dur * 0.08);
 
@@ -228,9 +229,12 @@ const renderClip = async (
     }
 
     if (cut.imageUrl) {
-      // 静的スケール（zoompanは極端に遅いため削除）
-      inputPart = `-loop 1 -t ${dur} -i "${imgPath}"`;
-      vfBase = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setpts=PTS-STARTPTS`;
+      // Ken Burns: ゆっくりズームイン（高品質・時間かかる）
+      const zoom = `min(zoom+0.0012,1.08)`;
+      inputPart = `-loop 1 -t ${dur + 1} -i "${imgPath}"`;
+      vfBase = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},` +
+               `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30,` +
+               `trim=duration=${dur},setpts=PTS-STARTPTS`;
     } else {
       inputPart = `-f lavfi -t ${dur} -i "color=c=${hexToFF(colorPrimary)}:s=${w}x${h}:r=30"`;
       vfBase = `[0:v]format=yuv420p`;

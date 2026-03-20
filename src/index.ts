@@ -2148,14 +2148,9 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
-    // 既にレンダリング中の場合、5分以内に更新があれば重複起動を防ぐ
-    // 5分以上更新がなければサーバー再起動等でスタックしたと判断して再起動
+    // OOMクラッシュ等でスタックしたジョブも含め、常に再起動する
     if (job.status === 'レンダリング中') {
-      const lastUpdate = new Date(job.updatedAt || 0).getTime();
-      if (Date.now() - lastUpdate < 5 * 60 * 1000) {
-        return res.json({ success: true, status: 'rendering', jobId: job.id });
-      }
-      console.log('[pal-db] stale rendering job, restarting:', job.id);
+      console.log('[pal-db] restarting stuck/existing rendering job:', job.id);
     }
 
     const host = `${req.protocol}://${req.get('host')}`;
@@ -2176,14 +2171,9 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
     const job = await getPalVideoJob(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'job not found' });
 
-    // 既にレンダリング中の場合、5分以内に更新があれば重複起動を防ぐ
-    // 5分以上更新がなければサーバー再起動等でスタックしたと判断して再起動
+    // OOMクラッシュ等でスタックしたジョブも含め、常に再起動する
     if (job.status === 'レンダリング中') {
-      const lastUpdate = new Date(job.updatedAt || 0).getTime();
-      if (Date.now() - lastUpdate < 5 * 60 * 1000) {
-        return res.json({ success: true, status: 'rendering', jobId: job.id });
-      }
-      console.log('[pal-db] stale rendering job, restarting:', job.id);
+      console.log('[pal-db] restarting stuck/existing rendering job:', job.id);
     }
 
     const host = `${req.protocol}://${req.get('host')}`;

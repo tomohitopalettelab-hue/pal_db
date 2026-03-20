@@ -329,13 +329,26 @@ export const renderWithFFmpeg = async (
     await onProgress?.({ step: 'clip', current: i + 1, total, label: `カット ${i + 1} / ${total} 完了` });
   }
 
-  // ── 2. Concat with xfade transitions ──────────────────────────────────────
+  // ── 2. Concat ──────────────────────────────────────────────────────────────
   const TRANS_DUR = 0.5;
   let concatPath: string;
 
   if (clipPaths.length === 1) {
     concatPath = clipPaths[0];
+  } else if (preview) {
+    // プレビュー: concat demuxer (ストリームコピー、メモリほぼゼロ)
+    concatPath = `${TMP}/${jobId}_concat.mp4`;
+    const listPath = `${TMP}/${jobId}_list.txt`;
+    const listContent = clipPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+    await fs.writeFile(listPath, listContent, 'utf8');
+
+    await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
+    console.log('[ffmpeg] concat demuxer (preview)…');
+    const cmd = `"${ffmpeg}" -y -f concat -safe 0 -i "${listPath}" -c copy "${concatPath}"`;
+    await execAsync(cmd, { timeout: 60000 });
+    await fs.unlink(listPath).catch(() => {});
   } else {
+    // 最終: xfade トランジション付き結合
     concatPath = `${TMP}/${jobId}_concat.mp4`;
     const inputArgs = clipPaths.map(p => `-i "${p}"`).join(' ');
 
@@ -357,7 +370,7 @@ export const renderWithFFmpeg = async (
       `-c:v libx264 -preset fast -crf 20 -r 30 -an "${concatPath}"`;
 
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
-    console.log('[ffmpeg] concatenating…');
+    console.log('[ffmpeg] concatenating with xfade…');
     await execAsync(cmd, { timeout: 300000 });
   }
 

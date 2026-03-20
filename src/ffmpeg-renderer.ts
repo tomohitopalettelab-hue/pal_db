@@ -22,13 +22,13 @@ const execAsync = promisify(exec);
 // 永続ディスク優先、なければ /tmp
 const DATA_DIR = process.env.PAL_DB_MEDIA_DIR ? '/var/data/pal-video' : '/tmp/pal-video';
 const TMP = DATA_DIR;
-const FONT_PATH = `${TMP}/NotoSansJP-Bold.ttf`;
 
-// フォントダウンロード フォールバック URL (GitHub raw — より信頼性高)
-const FONT_CDN_URLS = [
-  'https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/static/NotoSansJP-Bold.ttf',
-  'https://github.com/google/fonts/raw/main/ofl/notosansjp/static/NotoSansJP-Bold.ttf',
-];
+// リポジトリにバンドルされたフォント (fonts/NotoSansJP-Bold.otf)
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname_ts = path.dirname(__filename);
+// dist/ffmpeg-renderer.js → ../../fonts/NotoSansJP-Bold.otf
+const BUNDLED_FONT = path.resolve(__dirname_ts, '../../fonts/NotoSansJP-Bold.otf');
 
 // System font candidates (Render.com Ubuntu: apt install fonts-noto-cjk)
 const SYSTEM_FONTS = [
@@ -105,28 +105,15 @@ let _fontPath: string | null = null;
 export const ensureFont = async (): Promise<string> => {
   if (_fontPath) return _fontPath;
 
+  // 1. リポジトリバンドルフォントを最優先
+  try { await fs.access(BUNDLED_FONT); _fontPath = BUNDLED_FONT; return BUNDLED_FONT; } catch {}
+
+  // 2. システムフォント (apt install fonts-noto-cjk)
   for (const f of SYSTEM_FONTS) {
     try { await fs.access(f); _fontPath = f; return f; } catch {}
   }
 
-  try {
-    await fs.access(FONT_PATH);
-    _fontPath = FONT_PATH;
-    return FONT_PATH;
-  } catch {}
-
-  await fs.mkdir(TMP, { recursive: true });
-  for (const url of FONT_CDN_URLS) {
-    try {
-      console.log(`[ffmpeg] downloading font from ${url}…`);
-      await downloadFile(url, FONT_PATH);
-      _fontPath = FONT_PATH;
-      return FONT_PATH;
-    } catch (e) {
-      console.warn(`[ffmpeg] font download failed (${url}):`, (e as Error).message);
-    }
-  }
-  throw new Error('Noto Sans JP フォントのダウンロードに失敗しました。Render.com のビルドコマンドに apt-get install fonts-noto-cjk を追加してください。');
+  throw new Error(`フォントが見つかりません。バンドルフォント: ${BUNDLED_FONT}`);
 };
 
 // ─── FFmpeg binary ────────────────────────────────────────────────────────────

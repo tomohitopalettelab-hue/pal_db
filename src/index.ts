@@ -2103,8 +2103,8 @@ const renderWithFFmpegAndSave = async (job: any, host: string, preview = false):
     }).catch((e) => console.error('[pal-db] onProgress DB write failed:', e));
   }, preview);
 
-  // Public URL served by this Express server
-  const previewUrl = `${host}/api/pal-video/files/${job.id}`;
+  // Public URL served by this Express server (タイムスタンプでキャッシュ無効化)
+  const previewUrl = `${host}/api/pal-video/files/${job.id}?t=${Date.now()}`;
 
   const updated = await upsertPalVideoJob({
     id:         job.id,
@@ -2195,7 +2195,7 @@ app.get('/api/pal-video/files/:jobId', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Disposition', `inline; filename="video-${jobId}.mp4"`);
-    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     createReadStream(filePath).pipe(res);
   } catch {
     res.status(404).json({ success: false, error: 'file not found — re-render to regenerate' });

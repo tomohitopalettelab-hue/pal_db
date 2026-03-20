@@ -2195,17 +2195,33 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
   }
 });
 
-// ── 生成済み MP4 ファイル配信 ──────────────────────────────────────────────────
+// ── 生成済み MP4 ファイル配信 (Range request 対応) ────────────────────────────
 app.get('/api/pal-video/files/:jobId', async (req: Request, res: Response) => {
   const jobId = String(req.params.jobId || '').replace(/[^a-zA-Z0-9_\-]/g, '');
   const filePath = `${DATA_DIR}/${jobId}_output.mp4`;
   try {
     const stat = await fs.stat(filePath);
+    const fileSize = stat.size;
+    const rangeHeader = req.headers['range'];
+
     res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Disposition', `inline; filename="video-${jobId}.mp4"`);
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    createReadStream(filePath).pipe(res);
+
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader('Content-Length', chunkSize);
+      createReadStream(filePath, { start, end }).pipe(res);
+    } else {
+      res.setHeader('Content-Length', fileSize);
+      createReadStream(filePath).pipe(res);
+    }
   } catch {
     res.status(404).json({ success: false, error: 'file not found — re-render to regenerate' });
   }

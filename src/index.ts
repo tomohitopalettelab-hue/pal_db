@@ -1443,12 +1443,181 @@ const buildCreatomateInlineSource = (payload: Record<string, unknown>) => {
   };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Gradient template builder (フルカラーグラデーション / 写真不要 / テキスト主役)
+// ─────────────────────────────────────────────────────────────────────────────
+const buildGradientInlineSource = (payload: Record<string, unknown>) => {
+  const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
+  const dims = (DESTINATION_DIMENSIONS[destination] || [1080, 1920]) as [number, number];
+  const [w, h] = dims;
+  const isVertical = h > w;
+
+  const colorPrimary = String(payload?.colorPrimary || '#E95464');
+  const colorAccent  = String(payload?.colorAccent  || '#1c9a8b');
+  const textColor    = String(payload?.textColor    || '#ffffff');
+  const bgmRaw = String(payload?.bgm || '');
+  const bgmUrl = bgmRaw.startsWith('http') ? bgmRaw : (BGM_URL_MAP[bgmRaw] || '');
+
+  const rawCuts: any[] = Array.isArray(payload?.cuts) && (payload.cuts as any[]).length > 0
+    ? payload.cuts as any[]
+    : [{ mainText: String(payload?.telopMain || ''), subText: String(payload?.telopSub || ''), duration: 5 }];
+
+  // Gradient variations per scene
+  const GRADIENTS = [
+    // 0: diagonal top-left → bottom-right (primary → accent)
+    { fill_x0: '0%', fill_y0: '0%', fill_x1: '100%', fill_y1: '100%', c0: colorPrimary, c1: colorAccent },
+    // 1: diagonal bottom-left → top-right (accent → primary)
+    { fill_x0: '0%', fill_y0: '100%', fill_x1: '100%', fill_y1: '0%', c0: colorAccent, c1: colorPrimary },
+    // 2: vertical (primary dark → accent)
+    { fill_x0: '50%', fill_y0: '0%', fill_x1: '50%', fill_y1: '100%', c0: colorPrimary, c1: colorAccent },
+    // 3: horizontal (accent → primary)
+    { fill_x0: '0%', fill_y0: '50%', fill_x1: '100%', fill_y1: '50%', c0: colorAccent, c1: colorPrimary },
+    // 4: diagonal opposite
+    { fill_x0: '100%', fill_y0: '0%', fill_x1: '0%', fill_y1: '100%', c0: colorPrimary, c1: colorAccent },
+    // 5: vertical reversed
+    { fill_x0: '50%', fill_y0: '100%', fill_x1: '50%', fill_y1: '0%', c0: colorAccent, c1: colorPrimary },
+  ];
+
+  const TITLE_ANIMS = [
+    [{ type: 'text-slide', direction: 'up', duration: 0.7, easing: 'back-out' }],
+    [{ type: 'scale', start_scale: '60%', end_scale: '100%', fade: true, duration: 0.8, easing: 'elastic-out' }],
+    [{ type: 'spin', rotation: '-14°', fade: true, duration: 0.75, easing: 'back-out' }],
+    [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
+    [{ type: 'slide', direction: 'up', distance: '12%', fade: true, duration: 0.7, easing: 'quadratic-out' }],
+    [{ type: 'scale', start_scale: '72%', end_scale: '100%', fade: true, duration: 0.75, easing: 'elastic-out' }],
+  ];
+
+  const scenes = rawCuts.slice(0, 8).map((cut: any, i: number) => {
+    const dur       = Number(cut.duration || cut.durationSec || 5);
+    const mainText  = String(cut.mainText || cut.title || cut.textMain || '');
+    const subText   = String(cut.subText  || cut.subtitle || cut.textSub || '');
+    const imgUrl    = String(cut.imageUrl || '').trim();
+    const hasImg    = imgUrl.startsWith('http');
+    const timeStart = rawCuts.slice(0, i).reduce((acc: number, c: any) => acc + Number(c.duration || 5), 0);
+    const grad      = GRADIENTS[i % GRADIENTS.length];
+    const elements: any[] = [];
+
+    // ── Gradient background ───────────────────────────────────────────────────
+    elements.push({
+      type: 'shape', track: 1, time: 0,
+      path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_mode: 'linear',
+      fill_color: [{ offset: 0, color: grad.c0 }, { offset: 1, color: grad.c1 }],
+      fill_x0: grad.fill_x0, fill_y0: grad.fill_y0,
+      fill_x1: grad.fill_x1, fill_y1: grad.fill_y1,
+      width: '100%', height: '100%',
+    });
+
+    // ── Optional: overlay image with opacity (if available) ──────────────────
+    if (hasImg) {
+      elements.push({
+        type: 'image', track: 2, time: 0, source: imgUrl, dynamic: true,
+        width: '100%', height: '100%', x_anchor: '50%', y_anchor: '50%',
+        fill_mode: 'cover', opacity: 0.18,
+        ...resolveKenBurns(i, dur),
+      });
+    }
+
+    // ── Large decorative geometric: top-right circle accent ──────────────────
+    elements.push({
+      type: 'shape', track: 3, time: 0,
+      path: 'M 50 0 A 50 50 0 1 1 49.9999 0 Z',  // circle
+      fill_color: 'rgba(255,255,255,0.08)',
+      width: isVertical ? '80%' : '60%', height: isVertical ? '42%' : '60%',
+      x: '90%', y: '-5%', x_anchor: '50%', y_anchor: '50%',
+    });
+
+    // ── Bottom decorative circle ───────────────────────────────────────────────
+    elements.push({
+      type: 'shape', track: 4, time: 0,
+      path: 'M 50 0 A 50 50 0 1 1 49.9999 0 Z',
+      fill_color: 'rgba(255,255,255,0.06)',
+      width: isVertical ? '55%' : '40%', height: isVertical ? '28%' : '40%',
+      x: '10%', y: '105%', x_anchor: '50%', y_anchor: '50%',
+    });
+
+    // ── Horizontal accent line (wipe reveal) ─────────────────────────────────
+    elements.push({
+      type: 'shape', track: 5, time: 0.2,
+      path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_color: 'rgba(255,255,255,0.30)',
+      width: isVertical ? '28%' : '20%', height: '0.5 vmin',
+      x: '50%', y: isVertical ? '41%' : '39%', x_anchor: '50%', y_anchor: '50%',
+      animations: [{ type: 'wipe', direction: 'right', duration: 0.7, easing: 'quadratic-out' }],
+    });
+
+    // ── Scene counter top-right ───────────────────────────────────────────────
+    elements.push({
+      type: 'text', track: 6, time: 0.1,
+      text: String(i + 1).padStart(2, '0'),
+      x: isVertical ? '88%' : '92%', y: '6%',
+      x_anchor: '50%', y_anchor: '50%',
+      font_family: 'Noto Sans JP',
+      font_size: '2.5 vmin', font_weight: '100',
+      fill_color: 'rgba(255,255,255,0.40)',
+      letter_spacing: 2,
+      animations: [{ type: 'fade', duration: 0.5, easing: 'quadratic-out' }],
+    });
+
+    // ── Main title ───────────────────────────────────────────────────────────
+    if (mainText) {
+      elements.push({
+        type: 'text', track: 7, time: 0.28,
+        text: mainText, dynamic: true,
+        x: '50%', y: isVertical ? '46%' : '44%',
+        x_anchor: '50%', y_anchor: '50%',
+        width: isVertical ? '86%' : '78%',
+        font_family: 'Noto Sans JP',
+        font_size: isVertical ? '8 vmin' : '7 vmin',
+        font_weight: '900', fill_color: textColor,
+        letter_spacing: 4, text_align: 'center', line_height: 1.15,
+        shadow_color: 'rgba(0,0,0,0.25)', shadow_blur: 10, shadow_x: 0, shadow_y: 4,
+        animations: TITLE_ANIMS[i % TITLE_ANIMS.length],
+      });
+    }
+
+    // ── Subtitle ─────────────────────────────────────────────────────────────
+    if (subText) {
+      elements.push({
+        type: 'text', track: 8, time: 0.48,
+        text: subText, dynamic: true,
+        x: '50%', y: isVertical ? '58%' : '56%',
+        x_anchor: '50%', y_anchor: '50%',
+        width: isVertical ? '74%' : '66%',
+        font_family: 'Noto Sans JP',
+        font_size: isVertical ? '3.2 vmin' : '2.8 vmin',
+        font_weight: '300', fill_color: 'rgba(255,255,255,0.85)',
+        letter_spacing: 3, text_align: 'center',
+        animations: [{ type: 'slide', direction: 'up', distance: '5%', fade: true, duration: 0.6, easing: 'quadratic-out' }],
+      });
+    }
+
+    // ── Bottom accent line ────────────────────────────────────────────────────
+    elements.push({
+      type: 'shape', track: 9, time: 0.4,
+      path: 'M 0 0 L 100 0 L 100 100 L 0 100 Z',
+      fill_color: 'rgba(255,255,255,0.30)',
+      width: isVertical ? '28%' : '20%', height: '0.5 vmin',
+      x: '50%', y: isVertical ? '63%' : '61%', x_anchor: '50%', y_anchor: '50%',
+      animations: [{ type: 'wipe', direction: 'left', duration: 0.65, easing: 'quadratic-out' }],
+    });
+
+    const { animations, exit_animations } = resolveSceneTransition(String(cut.transition || ''), i, colorPrimary, colorAccent);
+    return { type: 'composition', track: i + 1, time: timeStart, duration: dur, animations, exit_animations, elements };
+  });
+
+  const rootElements: any[] = [...scenes];
+  if (bgmUrl) rootElements.push({ name: 'bgm_track', type: 'audio', track: 90, time: 0, source: bgmUrl, audio_fade_out: 1.5 });
+  return { output_format: 'mp4', width: w, height: h, frame_rate: 30, elements: rootElements };
+};
+
 const renderCreatomateJob = async (_req: Request, job: any) => {
   const payload = (job.payload || {}) as Record<string, unknown>;
 
   const style = String(payload?.style || 'standard');
   const source = style === 'collage'  ? buildCollageInlineSource(payload)
     : style === 'magazine' ? buildMagazineInlineSource(payload)
+    : style === 'gradient' ? buildGradientInlineSource(payload)
     : style === 'minimal'  ? buildMinimalInlineSource(payload)
     : buildCreatomateInlineSource(payload);
 
@@ -1863,7 +2032,8 @@ app.post('/api/pal-video/debug-source', async (req: Request, res: Response) => {
     const style = String(payload?.style || 'standard');
     const source = style === 'collage'  ? buildCollageInlineSource(payload)
       : style === 'magazine' ? buildMagazineInlineSource(payload)
-      : style === 'minimal'  ? buildMinimalInlineSource(payload)
+      : style === 'gradient' ? buildGradientInlineSource(payload)
+    : style === 'minimal'  ? buildMinimalInlineSource(payload)
       : buildCreatomateInlineSource(payload);
     const bodyJson = JSON.stringify({ source });
 

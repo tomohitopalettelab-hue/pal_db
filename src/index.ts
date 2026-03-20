@@ -2091,6 +2091,15 @@ app.post('/api/pal-video/debug-source', async (req: Request, res: Response) => {
 // ── FFmpeg render helper ──────────────────────────────────────────────────────
 const renderWithFFmpegAndSave = async (job: any, host: string, preview = false): Promise<{ updated: any; previewUrl: string }> => {
   const payload = (job.payload || {}) as Record<string, unknown>;
+  const startedAt = Date.now();
+
+  // 最初に「開始中」進捗をDBに書いておく（onProgress より前に確実に書く）
+  await upsertPalVideoJob({
+    id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+    status: 'レンダリング中',
+    payload: { ...payload, renderProgress: { step: 'clip', current: 0, total: 1, label: '開始中...' }, renderStartedAt: startedAt },
+    previewUrl: null, youtubeUrl: job.youtubeUrl,
+  }).catch((e) => console.error('[pal-db] initial progress write failed:', e));
 
   const filePath = await renderWithFFmpeg(payload, job.id, async (progress) => {
     // カット完了ごとにDBの payload.renderProgress を更新
@@ -2098,7 +2107,7 @@ const renderWithFFmpegAndSave = async (job: any, host: string, preview = false):
     await upsertPalVideoJob({
       id: job.id, paletteId: job.paletteId, planCode: job.planCode,
       status: 'レンダリング中',
-      payload: { ...payload, renderProgress: progress },
+      payload: { ...payload, renderProgress: progress, renderStartedAt: startedAt },
       previewUrl: null, youtubeUrl: job.youtubeUrl,
     }).catch((e) => console.error('[pal-db] onProgress DB write failed:', e));
   }, preview);
@@ -2394,6 +2403,27 @@ app.delete('/api/pal-opt-posts/:id', async (req: Request, res: Response) => {
 app.listen(port, async () => {
   try {
     await ensureTables();
+    // サーバー再起動時: 前回レンダリング中だったジョブをエラーに更新
+    try {
+      const { sql } = await import('@vercel/postgres');
+      const stuck = await sql`
+        UPDATE pal_video_jobs
+        SET status = 'エラー',
+            payload = jsonb_set(
+              COALESCE(payload, '{}'::jsonb),
+              '{renderError}',
+              '"サーバー再起動により中断されました。再度レンダリングしてください。"'
+            ),
+            updated_at = NOW()
+        WHERE status = 'レンダリング中'
+        RETURNING id
+      `;
+      if (stuck.rowCount && stuck.rowCount > 0) {
+        console.log(`[pal-db] marked ${stuck.rowCount} stuck rendering job(s) as error`);
+      }
+    } catch (e) {
+      console.warn('[pal-db] startup cleanup warning:', e);
+    }
     console.log(`[pal-db] running on http://localhost:${port}`);
   } catch (error) {
     console.error('[pal-db] init error', error);

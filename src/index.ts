@@ -2153,7 +2153,7 @@ app.post('/api/pal-video/generate', async (req: Request, res: Response) => {
       console.log('[pal-db] restarting stuck/existing rendering job:', job.id);
     }
 
-    const host = `${req.protocol}://${req.get('host')}`;
+    const host = getPublicBaseUrl(req);
     startBackgroundRender(job, host, true); // preview=true: 半解像度で高速生成
     return res.json({ success: true, status: 'rendering', jobId: job.id });
   } catch (error) {
@@ -2176,7 +2176,7 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
       console.log('[pal-db] restarting stuck/existing rendering job:', job.id);
     }
 
-    const host = `${req.protocol}://${req.get('host')}`;
+    const host = getPublicBaseUrl(req);
     startBackgroundRender(job, host);
     return res.json({ success: true, status: 'rendering', jobId: job.id });
   } catch (error) {

@@ -7,7 +7,7 @@ import path from 'path';
 import { existsSync, mkdirSync, createReadStream } from 'fs';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
-import { renderWithFFmpeg } from './ffmpeg-renderer.js';
+import { renderWithFFmpeg, DATA_DIR } from './ffmpeg-renderer.js';
 import {
   deleteAccountStatusOption,
   deleteAccount,
@@ -2189,7 +2189,7 @@ app.post('/api/pal-video/render', async (req: Request, res: Response) => {
 // ── 生成済み MP4 ファイル配信 ──────────────────────────────────────────────────
 app.get('/api/pal-video/files/:jobId', async (req: Request, res: Response) => {
   const jobId = String(req.params.jobId || '').replace(/[^a-zA-Z0-9_\-]/g, '');
-  const filePath = `/tmp/pal-video/${jobId}_output.mp4`;
+  const filePath = `${DATA_DIR}/${jobId}_output.mp4`;
   try {
     const stat = await fs.stat(filePath);
     res.setHeader('Content-Type', 'video/mp4');

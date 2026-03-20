@@ -20,7 +20,7 @@ const _ffmpegStaticPath: string | null = (() => {
 const execAsync = promisify(exec);
 
 // 永続ディスク優先、なければ /tmp
-const DATA_DIR = process.env.PAL_DB_MEDIA_DIR ? '/var/data/pal-video' : '/tmp/pal-video';
+export const DATA_DIR = process.env.PAL_DB_MEDIA_DIR ? '/var/data/pal-video' : '/tmp/pal-video';
 const TMP = DATA_DIR;
 
 // リポジトリにバンドルされたフォント (fonts/NotoSansJP-Bold.otf)

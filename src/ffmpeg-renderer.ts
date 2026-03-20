@@ -239,16 +239,19 @@ const overlayFilter = (
   const atTop    = layout === 'top' || layout === 'billboard';
   const atCenter = layout === 'center';
 
+  // テキスト間の行間（CJKフォントは実描画高さが fontsize より大きいため余裕を持たせる）
+  const lineGap = Math.round(mSize * 0.55); // メインフォントサイズの55%
+
   // 数値で Y 位置を計算（スライドアニメーション用）
   const mYpx = atTop
     ? margin
     : atCenter
-    ? Math.round(h / 2) - (subText ? Math.round(mSize / 2) + 8 : Math.round(mSize / 2))
-    : h - margin - (subText ? mSize + sSize + 14 : mSize);
+    ? Math.round(h / 2) - Math.round((mSize + (subText ? lineGap + sSize : 0)) / 2)
+    : h - margin - (subText ? sSize + lineGap + mSize : mSize);
   const sYpx = atTop
-    ? margin + mSize + 10
+    ? margin + mSize + lineGap
     : atCenter
-    ? Math.round(h / 2) + (mainText ? 8 : 0)
+    ? Math.round(h / 2) + Math.round((mSize + (mainText ? lineGap : 0)) / 2) - Math.round(sSize / 2)
     : h - margin - sSize;
 
   // スライド方向: top は上から、それ以外は下から

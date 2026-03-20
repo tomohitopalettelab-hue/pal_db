@@ -205,12 +205,13 @@ const DESTINATION_DIMENSIONS: Record<string, [number, number]> = {
   web_banner:       [1920, 1080],
 };
 
-// BGM tracks (royalty-free)
+// BGM tracks (royalty-free, SoundHelix — external hotlink allowed)
+// Pixabay CDN blocks requests from render servers (403), so we use SoundHelix instead.
 const BGM_URL_MAP: Record<string, string> = {
-  bright_pop:    'https://cdn.pixabay.com/audio/2022/05/27/audio_1808fbf07a.mp3',
-  cool_minimal:  'https://cdn.pixabay.com/audio/2022/03/10/audio_270f49d28e.mp3',
-  cinematic:     'https://cdn.pixabay.com/audio/2022/01/20/audio_d0bd90a6d6.mp3',
-  natural_warm:  'https://cdn.pixabay.com/audio/2021/11/13/audio_7b6e8dd7bf.mp3',
+  bright_pop:    'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+  cool_minimal:  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3',
+  cinematic:     'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3',
+  natural_warm:  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

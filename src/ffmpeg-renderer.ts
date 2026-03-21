@@ -146,15 +146,23 @@ let _ffmpegBin: string | null = null;
 const getFFmpegBin = async (): Promise<string> => {
   if (_ffmpegBin) return _ffmpegBin;
 
-  // Try system ffmpeg first
+  // ffmpeg-static を優先: npm バンドル版は FFmpeg 6.1+ で最新 xfade transition に対応
+  // システム FFmpeg (Ubuntu 22.04 = 4.4.2) は古く flyeye 等が未対応のため後回し
+  if (_ffmpegStaticPath) {
+    try {
+      await runFFmpeg(_ffmpegStaticPath, ['-version'], 5000);
+      console.log(`[ffmpeg] using ffmpeg-static: ${_ffmpegStaticPath}`);
+      _ffmpegBin = _ffmpegStaticPath;
+      return _ffmpegStaticPath;
+    } catch {}
+  }
+
+  // フォールバック: システム ffmpeg
   try {
     await runFFmpeg('ffmpeg', ['-version'], 5000);
     _ffmpegBin = 'ffmpeg';
     return 'ffmpeg';
   } catch {}
-
-  // Fall back to ffmpeg-static
-  if (_ffmpegStaticPath) { _ffmpegBin = _ffmpegStaticPath; return _ffmpegStaticPath; }
 
   _ffmpegBin = 'ffmpeg';
   return 'ffmpeg';
@@ -163,8 +171,7 @@ const getFFmpegBin = async (): Promise<string> => {
 // ─── xfade transition name map ────────────────────────────────────────────────
 // idx を使って同じ transition 種別でも毎回方向を変え単調さを防ぐ
 
-// FFmpeg 4.3 で確実に動作する xfade transition のみ使用
-// flyeye / pixelize / distance は新しいバージョン限定のため除外
+// ffmpeg-static (FFmpeg 6.1+) を使用するため全 xfade transition が利用可能
 const xfadeOf = (transition: string, idx: number): string => {
   const slides  = ['slideleft', 'slideright', 'slideup', 'slidedown']    as const;
   const wipes   = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']     as const;
@@ -174,16 +181,16 @@ const xfadeOf = (transition: string, idx: number): string => {
   const slices  = ['hlslice', 'hrslice', 'vuslice', 'vdslice']           as const;
   const smooths = ['smoothleft','smoothright','smoothup','smoothdown']    as const;
   const map: Record<string, readonly string[]> = {
-    'fade':       ['fade', 'dissolve', 'fadeblack'],
+    'fade':       ['fade', 'dissolve', 'distance'],
     'slide':      slides,
     'wipe':       wipes,
     'color-wipe': ['fadewhite', 'fadeblack'],
     'zoom':       ['zoomin', ...smooths],
-    'bounce':     ['fadewhite', 'hblur', 'dissolve'],
+    'bounce':     ['fadewhite', 'distance', 'pixelize'],
     'push':       covers,
     'film-roll':  slices,
     'circular':   ['circleopen', 'circleclose', 'radial'],
-    'flip':       ['fadegrays', 'hblur', 'dissolve'],
+    'flip':       ['fadegrays', 'pixelize', 'flyeye'],
     'blur':       ['hblur', 'fade', 'dissolve'],
     'stripe':     [...reveals, ...diags],
     'none':       ['fade'],

@@ -1955,8 +1955,26 @@ const renderWithFFmpegAndSave = async (job, host, preview = false) => {
         payload: { ...payload, renderProgress: { step: 'clip', current: 0, total: 1, label: '開始中...' }, renderStartedAt: startedAt },
         previewUrl: null, youtubeUrl: job.youtubeUrl,
     }).catch((e) => console.error('[pal-db] initial progress write failed:', e));
+    // ハートビートタイマー: カット処理中にも2分ごとDBを更新し、
+    // フロントエンドのスタール検出（進捗が止まったと誤認）を防ぐ
+    let lastHeartbeatProgress = {
+        step: 'clip', current: 0, total: 1, label: '開始中...',
+    };
+    const heartbeatTimer = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+        upsertPalVideoJob({
+            id: job.id, paletteId: job.paletteId, planCode: job.planCode,
+            status: 'レンダリング中',
+            payload: { ...payload, renderProgress: { ...lastHeartbeatProgress, label: `${lastHeartbeatProgress.label.replace(/ \(\d+.*\)$/, '')} (${timeStr})` }, renderStartedAt: startedAt },
+            previewUrl: null, youtubeUrl: job.youtubeUrl,
+        }).catch(() => { });
+    }, 120000); // 2分ごと
     const filePath = await renderWithFFmpeg(payload, job.id, async (progress) => {
         // カット完了ごとにDBの payload.renderProgress を更新
+        lastHeartbeatProgress = progress;
         console.log(`[pal-db] onProgress job=${job.id}`, JSON.stringify(progress));
         await upsertPalVideoJob({
             id: job.id, paletteId: job.paletteId, planCode: job.planCode,
@@ -1964,7 +1982,7 @@ const renderWithFFmpegAndSave = async (job, host, preview = false) => {
             payload: { ...payload, renderProgress: progress, renderStartedAt: startedAt },
             previewUrl: null, youtubeUrl: job.youtubeUrl,
         }).catch((e) => console.error('[pal-db] onProgress DB write failed:', e));
-    }, preview);
+    }, preview).finally(() => clearInterval(heartbeatTimer));
     // Public URL served by this Express server (タイムスタンプでキャッシュ無効化)
     const previewUrl = `${host}/api/pal-video/files/${job.id}?t=${Date.now()}`;
     const updated = await upsertPalVideoJob({

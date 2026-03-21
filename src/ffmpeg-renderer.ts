@@ -464,9 +464,11 @@ export const renderWithFFmpeg = async (
 
   const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
   const [fw, fh] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
-  // プレビューは半解像度（ピクセル数1/4でzoompanが大幅高速化）
-  const w = preview ? Math.round(fw / 2) : fw;
-  const h = preview ? Math.round(fh / 2) : fh;
+  // Render.com 512MB 制限対策: preview/final ともに半解像度（540x960 等）
+  // 1080x1920 フルHDは Ken Burns overlay だけで ~300MB使用しOOMになる
+  // 半解像度でフレームバッファが 1/4 に削減され余裕が生まれる
+  const w = Math.round(fw / 2);
+  const h = Math.round(fh / 2);
   const colorPrimary = String(payload?.colorPrimary || '#1A1A2E');
   const colorAccent  = String(payload?.colorAccent  || '#E95464');
   const style        = String(payload?.style         || 'standard');

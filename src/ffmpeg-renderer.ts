@@ -163,23 +163,27 @@ const getFFmpegBin = async (): Promise<string> => {
 // ─── xfade transition name map ────────────────────────────────────────────────
 // idx を使って同じ transition 種別でも毎回方向を変え単調さを防ぐ
 
+// FFmpeg 4.3 で確実に動作する xfade transition のみ使用
+// flyeye / pixelize / distance は新しいバージョン限定のため除外
 const xfadeOf = (transition: string, idx: number): string => {
-  const slides   = ['slideleft', 'slideright', 'slideup', 'slidedown'] as const;
-  const wipes    = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']  as const;
-  const covers   = ['coverleft', 'coverright', 'coverup', 'coverdown'] as const;
-  const reveals  = ['revealleft','revealright','revealup','revealdown'] as const;
-  const diags    = ['diagtl', 'diagtr', 'diagbl', 'diagbr']            as const;
+  const slides  = ['slideleft', 'slideright', 'slideup', 'slidedown']    as const;
+  const wipes   = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']     as const;
+  const covers  = ['coverleft', 'coverright', 'coverup', 'coverdown']    as const;
+  const reveals = ['revealleft','revealright','revealup','revealdown']    as const;
+  const diags   = ['diagtl', 'diagtr', 'diagbl', 'diagbr']               as const;
+  const slices  = ['hlslice', 'hrslice', 'vuslice', 'vdslice']           as const;
+  const smooths = ['smoothleft','smoothright','smoothup','smoothdown']    as const;
   const map: Record<string, readonly string[]> = {
-    'fade':       ['fade', 'dissolve', 'distance'],
+    'fade':       ['fade', 'dissolve', 'fadeblack'],
     'slide':      slides,
     'wipe':       wipes,
-    'color-wipe': ['fadewhite', 'fadeblack', 'fadewhite', 'fadeblack'],
-    'zoom':       ['zoomin', 'smoothleft', 'smoothright', 'smoothup', 'smoothdown'],
-    'bounce':     ['fadewhite', 'distance', 'pixelize'],
+    'color-wipe': ['fadewhite', 'fadeblack'],
+    'zoom':       ['zoomin', ...smooths],
+    'bounce':     ['fadewhite', 'hblur', 'dissolve'],
     'push':       covers,
-    'film-roll':  ['hlslice', 'hrslice', 'vuslice', 'vdslice'],
+    'film-roll':  slices,
     'circular':   ['circleopen', 'circleclose', 'radial'],
-    'flip':       ['fadegrays', 'pixelize', 'flyeye'],
+    'flip':       ['fadegrays', 'hblur', 'dissolve'],
     'blur':       ['hblur', 'fade', 'dissolve'],
     'stripe':     [...reveals, ...diags],
     'none':       ['fade'],

@@ -425,7 +425,9 @@ const renderClip = async (
     `fade=t=out:st=${fadeOut}:d=${fadeDur}`,
   ];
 
-  const preset = preview ? 'veryfast' : 'fast';
+  // ultrafast: ルックアヘッド・B-frame を無効化してメモリ使用量を最小化
+  // Render.com 512MB 制限対策（fast は lookahead で +90MB 使用する）
+  const preset = 'ultrafast';
   const crf    = preview ? 26 : 20;
 
   console.log(`[ffmpeg] clip ${index} (${pw}x${ph}, preview=${preview})`);
@@ -434,7 +436,7 @@ const renderClip = async (
     ...inputArgs,
     '-filter_complex', filterChain.join(','),
     '-c:v', 'libx264', '-preset', preset,
-    '-crf', String(crf), '-r', '30', '-threads', '2', '-an',
+    '-crf', String(crf), '-r', '30', '-threads', '1', '-an',
     clipPath,
   ]);
   return clipPath;
@@ -538,40 +540,26 @@ export const renderWithFFmpeg = async (
     ], 120000);
     await fs.unlink(listPath).catch(() => {});
   } else {
-    // 最終: 単一 filter_complex チェーン xfade（再エンコード 1 回）
-    // 逐次ペア結合は N-1 回の再エンコードで最後に巨大中間ファイルが発生しOOMになりやすい。
-    // 全クリップを 1 つの filter_complex に渡してフレーム単位パイプライン処理することで
-    // メモリ使用量を大幅に削減し、エンコード 1 回で済む。
+    // 最終: concat demuxer（xfade廃止）
+    // xfade は複数入力を同時バッファするため Render.com 512MB 制限でOOMになる。
+    // 各クリップには fade-in/fade-out が既に適用済みのため、
+    // concat demuxer で順次結合するだけでスムーズな「フェードスルー」効果が得られる。
+    // メモリ使用量: 常に 1 クリップのみデコード → 大幅削減。
     concatPath = `${TMP}/${jobId}_concat.mp4`;
+    const listPath = `${TMP}/${jobId}_list.txt`;
+    const listContent = clipPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+    await fs.writeFile(listPath, listContent, 'utf8');
+
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
-    console.log(`[ffmpeg] single-pass chained xfade (${clipPaths.length} clips)…`);
-
-    const xInputArgs: string[] = [];
-    for (const p of clipPaths) xInputArgs.push('-i', p);
-
-    const filterParts: string[] = [];
-    let prevLabel = '[0:v]';
-    let accumDur  = rawCuts[0].duration;
-
-    for (let i = 1; i < clipPaths.length; i++) {
-      const trans    = xfadeOf(rawCuts[i].transition, i - 1);
-      const offset   = Math.max(0, accumDur - TRANS_DUR).toFixed(3);
-      const isLast   = i === clipPaths.length - 1;
-      const outLabel = isLast ? '[vout]' : `[v${i}]`;
-      filterParts.push(`${prevLabel}[${i}:v]xfade=transition=${trans}:duration=${TRANS_DUR}:offset=${offset}${outLabel}`);
-      prevLabel  = outLabel;
-      accumDur  += rawCuts[i].duration - TRANS_DUR;
-    }
-
+    console.log('[ffmpeg] concat demuxer (final)…');
     await runFFmpeg(ffmpeg, [
       '-y', '-loglevel', 'error',
-      ...xInputArgs,
-      '-filter_complex', filterParts.join(';'),
-      '-map', '[vout]',
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '2', '-an',
+      '-f', 'concat', '-safe', '0', '-i', listPath,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-r', '30', '-threads', '1', '-an',
       '-movflags', '+faststart',
       concatPath,
-    ], 600000); // 5カット単一パスで最大10分
+    ], 180000);
+    await fs.unlink(listPath).catch(() => {});
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────

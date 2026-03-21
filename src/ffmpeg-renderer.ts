@@ -493,6 +493,7 @@ export const renderWithFFmpeg = async (
   const style        = String(payload?.style         || 'standard');
   const bgmKey       = String(payload?.bgm           || '');
   const bgmUrl       = bgmKey.startsWith('http') ? bgmKey : (BGM_URLS[bgmKey] || '');
+  const logoUrl      = String(payload?.logoUrl || '').startsWith('http') ? String(payload.logoUrl) : '';
 
   const rawCuts: Cut[] = ((Array.isArray(payload?.cuts) ? payload.cuts : []) as any[])
     .slice(0, 5) // 最大5カット: xfade 同時デコード数を抑えメモリを節約
@@ -613,7 +614,39 @@ export const renderWithFFmpeg = async (
     await fs.copyFile(concatPath, outputPath);
   }
 
-  // ── 4. Cleanup ────────────────────────────────────────────────────────────
+  // ── 4. Logo overlay ───────────────────────────────────────────────────────
+  if (logoUrl && !preview) {
+    const logoPath   = `${TMP}/${jobId}_logo.png`;
+    const logoOutput = `${TMP}/${jobId}_logo_out.mp4`;
+    try {
+      await downloadFile(logoUrl, logoPath);
+      const logoW = Math.round(w * 0.18); // 動画幅の18%
+      const pad   = Math.round(w * 0.03); // 右下の余白
+      console.log('[ffmpeg] adding logo overlay…');
+      await runFFmpeg(ffmpeg, [
+        '-y', '-loglevel', 'error',
+        '-i', outputPath,
+        '-i', logoPath,
+        '-filter_complex',
+          `[1:v]scale=${logoW}:-1:flags=lanczos,format=rgba[logo];` +
+          `[0:v][logo]overlay=x=W-w-${pad}:y=H-h-${pad}:format=auto`,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        logoOutput,
+      ], 120000);
+      await fs.unlink(outputPath).catch(() => {});
+      await fs.rename(logoOutput, outputPath);
+      console.log('[ffmpeg] logo overlay done');
+    } catch (e) {
+      console.warn('[ffmpeg] logo overlay failed, skipping:', (e as Error).message);
+      await fs.unlink(logoPath).catch(() => {});
+      await fs.unlink(logoOutput).catch(() => {});
+    }
+    await fs.unlink(logoPath).catch(() => {});
+  }
+
+  // ── 5. Cleanup ────────────────────────────────────────────────────────────
   const toDelete = [
     ...clipPaths,
     ...(concatPath !== clipPaths[0] ? [concatPath] : []),

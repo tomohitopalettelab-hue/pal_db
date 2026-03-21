@@ -538,44 +538,40 @@ export const renderWithFFmpeg = async (
     ], 120000);
     await fs.unlink(listPath).catch(() => {});
   } else {
-    // 最終: 2 クリップずつ xfade で逐次結合
-    // これにより FFmpeg が同時にデコードするストリームを常に 2 本に限定できる
+    // 最終: 単一 filter_complex チェーン xfade（再エンコード 1 回）
+    // 逐次ペア結合は N-1 回の再エンコードで最後に巨大中間ファイルが発生しOOMになりやすい。
+    // 全クリップを 1 つの filter_complex に渡してフレーム単位パイプライン処理することで
+    // メモリ使用量を大幅に削減し、エンコード 1 回で済む。
+    concatPath = `${TMP}/${jobId}_concat.mp4`;
     await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
-    console.log('[ffmpeg] sequential pairwise xfade…');
+    console.log(`[ffmpeg] single-pass chained xfade (${clipPaths.length} clips)…`);
 
-    let currentPath = clipPaths[0];
-    let currentDur  = rawCuts[0].duration;
+    const xInputArgs: string[] = [];
+    for (const p of clipPaths) xInputArgs.push('-i', p);
+
+    const filterParts: string[] = [];
+    let prevLabel = '[0:v]';
+    let accumDur  = rawCuts[0].duration;
 
     for (let i = 1; i < clipPaths.length; i++) {
-      const nextPath  = clipPaths[i];
-      const nextDur   = rawCuts[i].duration;
-      const trans     = xfadeOf(rawCuts[i].transition, i - 1);
-      const offset    = Math.max(0, currentDur - TRANS_DUR);
-      const outPath   = `${TMP}/${jobId}_merge_${i}.mp4`;
-
-      console.log(`[ffmpeg] xfade merge ${i}/${clipPaths.length - 1}: trans=${trans}, offset=${offset.toFixed(3)}s`);
-      await runFFmpeg(ffmpeg, [
-        '-y', '-loglevel', 'error',
-        '-i', currentPath,
-        '-i', nextPath,
-        '-filter_complex',
-          `[0:v][1:v]xfade=transition=${trans}:duration=${TRANS_DUR}:offset=${offset.toFixed(3)}[vout]`,
-        '-map', '[vout]',
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '1', '-an',
-        '-movflags', '+faststart',
-        outPath,
-      ], 300000);
-
-      // 前の中間ファイルを削除（元の clipPath は残す ← cleanup ステップで削除）
-      if (currentPath !== clipPaths[0] && !clipPaths.includes(currentPath)) {
-        await fs.unlink(currentPath).catch(() => {});
-      }
-      currentPath  = outPath;
-      currentDur  += nextDur - TRANS_DUR;
-
-      await onProgress?.({ step: 'concat', current: i, total, label: `結合中 ${i}/${clipPaths.length - 1}...` });
+      const trans    = xfadeOf(rawCuts[i].transition, i - 1);
+      const offset   = Math.max(0, accumDur - TRANS_DUR).toFixed(3);
+      const isLast   = i === clipPaths.length - 1;
+      const outLabel = isLast ? '[vout]' : `[v${i}]`;
+      filterParts.push(`${prevLabel}[${i}:v]xfade=transition=${trans}:duration=${TRANS_DUR}:offset=${offset}${outLabel}`);
+      prevLabel  = outLabel;
+      accumDur  += rawCuts[i].duration - TRANS_DUR;
     }
-    concatPath = currentPath;
+
+    await runFFmpeg(ffmpeg, [
+      '-y', '-loglevel', 'error',
+      ...xInputArgs,
+      '-filter_complex', filterParts.join(';'),
+      '-map', '[vout]',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '2', '-an',
+      '-movflags', '+faststart',
+      concatPath,
+    ], 600000); // 5カット単一パスで最大10分
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────

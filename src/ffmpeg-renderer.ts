@@ -248,92 +248,111 @@ const getColorGrade = (style: string): string => {
   }
 };
 
-// ─── Shape + Text overlay filter ─────────────────────────────────────────────
-
+// ─── Shape + Text overlay filter (CSS card デザインに準拠) ───────────────────
+//
+// CSS プレビューカード (CutPreviewCard) の以下要素を FFmpeg で再現:
+//   pv-strip  : 左側縦アクセントストリップ (accent色, 幅11.5%)
+//   白ドット   : ストリップ上部の白い小ドット
+//   グラデ     : 画像上の半透明オーバーレイ (layout別グラデーション)
+//   アクセントライン: テキスト上の短い横線
+//   pv-plus1/2: 「+」デコレーション
+//   pv-main/sub: テキスト (ストリップ右から左揃え, フェードイン)
+//
 const overlayFilter = (
   mainText: string, subText: string,
   layout: string, w: number, h: number, font: string,
-  colorAccent: string, dur: number, cutIndex: number,
+  colorAccent: string, colorPrimary: string, dur: number, hasImage: boolean,
 ): string => {
   const isPortrait = h > w;
-  const mSize  = Math.round(h * (isPortrait ? 0.036 : 0.042));
-  const sSize  = Math.round(h * (isPortrait ? 0.021 : 0.025));
-  const margin = Math.round(h * (isPortrait ? 0.065 : 0.055));
-  const bandH  = Math.round(h * (isPortrait ? 0.27 : 0.23));
-  const fadeIn = Math.min(0.6, dur * 0.15).toFixed(2);
-  const slide  = Math.round(h * 0.035); // スライド量（px）
-  const accent = colorAccent.replace('#', '');
+  const accent  = colorAccent.replace('#',  '');
+  const primary = colorPrimary.replace('#', '');
+
+  // ─ CSS card 比率に合わせたサイズ計算 ─
+  const stripW     = Math.round(w * 0.115);               // 左ストリップ幅 (11.5%)
+  const textX      = stripW + Math.round(w * 0.028);      // テキスト開始X
+  const mSize      = Math.round(h * (isPortrait ? 0.034 : 0.042));
+  const sSize      = Math.round(h * (isPortrait ? 0.020 : 0.025));
+  const margin     = Math.round(h * 0.065);
+  const lineW      = Math.round(w * 0.060);               // アクセントライン幅
+  const lineH      = Math.max(2, Math.round(h * 0.006));  // アクセントライン高さ
+  const CJK        = 1.45;
+  const mActH      = Math.round(mSize * CJK);
+  const sActH      = Math.round(sSize * CJK);
+  const lineGap    = Math.round(mSize * 0.40);
+  const lineToText = Math.round(mSize * 0.35);
 
   const atTop    = layout === 'top' || layout === 'billboard';
   const atCenter = layout === 'center';
 
-  // NotoSansCJK の実描画高さは fontsize の約1.45倍（ascender+descender込み）
-  // Y座標計算ではこの実高さを使わないと重なりが発生する
-  const CJK = 1.45;
-  const mActH = Math.round(mSize * CJK);  // メインテキスト実描画高さ
-  const sActH = Math.round(sSize * CJK);  // サブテキスト実描画高さ
-  const lineGap = Math.round(mSize * 0.35); // テキスト間の追加余白
-
-  // 数値で Y 位置を計算（スライドアニメーション用）
-  // ※ drawtext の y= はバウンディングボックス上端座標
-  const mYpx = atTop
-    ? margin
-    : atCenter
-    ? Math.round(h / 2) - Math.round((mActH + (subText ? lineGap + sActH : 0)) / 2)
-    : h - margin - (subText ? sActH + lineGap + mActH : mActH);
-  const sYpx = atTop
-    ? margin + mActH + lineGap
-    : atCenter
-    ? Math.round(h / 2) + Math.round((mActH + (mainText ? lineGap : 0)) / 2) - Math.round(sActH / 2)
-    : h - margin - sActH;
-
-  // スライド方向: top は上から、それ以外は下から
-  const dir = atTop ? -1 : 1;
-  const mYanim = `'if(lt(t,${fadeIn}),${mYpx}+${dir * slide}*(1-t/${fadeIn}),${mYpx})'`;
-  const sYanim = `'if(lt(t,${fadeIn}),${sYpx}+${dir * slide}*(1-t/${fadeIn}),${sYpx})'`;
-
-  const parts: string[] = [];
-
-  // ── シェイプ: レイアウト別に異なるデザイン ────────────────────
+  // ─ アクセントライン・テキスト Y 座標 ─
+  let lineY: number, mY: number, sY: number;
   if (atTop) {
-    // グラデーション風の上部バンド（2段重ね）
-    parts.push(`drawbox=x=0:y=0:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
-    parts.push(`drawbox=x=0:y=0:w=iw:h=${Math.round(bandH * 0.5)}:color=0x000000@0.2:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandH - 3}:w=iw:h=3:color=0x${accent}@0.95:t=fill`);
-    // 左端縦ライン
-    parts.push(`drawbox=x=0:y=0:w=4:h=${bandH}:color=0x${accent}@0.95:t=fill`);
+    lineY = margin;
+    mY    = lineY + lineH + lineToText;
+    sY    = mY + mActH + lineGap;
   } else if (atCenter) {
-    // 中央バンド + 両サイドライン
-    const bandY = Math.round(h / 2 - bandH / 2);
-    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.95:t=fill`);
-    parts.push(`drawbox=x=iw-5:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.95:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandY - 1}:w=iw:h=2:color=0x${accent}@0.5:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandY + bandH}:w=iw:h=2:color=0x${accent}@0.5:t=fill`);
+    const totalH = lineH + lineToText + mActH + (subText ? lineGap + sActH : 0);
+    lineY = Math.round(h / 2 - totalH / 2);
+    mY    = lineY + lineH + lineToText;
+    sY    = mY + mActH + lineGap;
   } else {
-    // 下部バンド: グラデーション風（濃淡2段）+ トップライン
-    const bandY = h - bandH;
-    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandY + Math.round(bandH * 0.5)}:w=iw:h=${Math.round(bandH * 0.5)}:color=0x000000@0.2:t=fill`);
-    parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=3:color=0x${accent}@0.95:t=fill`);
-    // カット番号によって右端装飾を変える
-    if (cutIndex % 2 === 0) {
-      parts.push(`drawbox=x=iw-5:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.5:t=fill`);
-    }
+    sY    = h - margin - sActH;
+    mY    = sY - lineGap - mActH;
+    lineY = mY - lineToText - lineH;
   }
 
-  if (!mainText && !subText) return parts.join(',');
-
-  // ── テキスト: スライドイン + フェードイン ────────────────────
+  const fadeIn = Math.min(0.6, dur * 0.15).toFixed(2);
   const shadow = 'shadowcolor=black@0.8:shadowx=2:shadowy=2';
   const alpha  = `'if(lt(t,${fadeIn}),t/${fadeIn},1)'`;
 
-  if (mainText) parts.push(
-    `drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=(w-text_w)/2:y=${mYanim}:${shadow}:alpha=${alpha}`
-  );
-  if (subText) parts.push(
-    `drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.9:x=(w-text_w)/2:y=${sYanim}:${shadow}:alpha=${alpha}`
-  );
+  const parts: string[] = [];
+
+  // 1. 画像グラデーションオーバーレイ (CSS の gradient overlay に対応)
+  if (hasImage) {
+    if (atTop) {
+      // linear-gradient(160deg, primary+BB 0%, primary+44 45%, transparent)
+      parts.push(`drawbox=x=${stripW}:y=0:w=iw:h=${Math.round(h * 0.50)}:color=0x${primary}@0.73:t=fill`);
+      parts.push(`drawbox=x=${stripW}:y=${Math.round(h * 0.50)}:w=iw:h=${Math.round(h * 0.25)}:color=0x${primary}@0.27:t=fill`);
+    } else if (atCenter) {
+      // colorPrimary + alpha 0.33
+      parts.push(`drawbox=x=${stripW}:y=0:w=iw:h=ih:color=0x${primary}@0.33:t=fill`);
+    } else {
+      // linear-gradient(to top, primary+DD 0%, primary+66 40%, transparent 75%)
+      const darkY = Math.round(h * 0.60);
+      parts.push(`drawbox=x=${stripW}:y=${darkY}:w=iw:h=${h - darkY}:color=0x${primary}@0.87:t=fill`);
+      parts.push(`drawbox=x=${stripW}:y=${Math.round(h * 0.25)}:w=iw:h=${Math.round(h * 0.35)}:color=0x${primary}@0.40:t=fill`);
+    }
+  }
+
+  // 2. 左アクセントストリップ (pv-strip)
+  parts.push(`drawbox=x=0:y=0:w=${stripW}:h=ih:color=0x${accent}FF:t=fill`);
+
+  // 3. ストリップ上部の白ドット
+  const dotSz = Math.max(3, Math.round(stripW * 0.18));
+  const dotX  = Math.round((stripW - dotSz) / 2);
+  parts.push(`drawbox=x=${dotX}:y=${Math.round(h * 0.025)}:w=${dotSz}:h=${dotSz}:color=0xFFFFFF@0.95:t=fill`);
+
+  // 4. テキスト上のアクセントライン
+  parts.push(`drawbox=x=${textX}:y=${lineY}:w=${lineW}:h=${lineH}:color=0x${accent}FF:t=fill`);
+
+  // 5. + デコレーション (右上・白)
+  const plus1Sz = Math.round(h * 0.045);
+  parts.push(`drawtext=fontfile='${font}':text='+':fontsize=${plus1Sz}:fontcolor=0xFFFFFF@0.65:x=${w - Math.round(w * 0.05)}:y=${Math.round(h * 0.018)}`);
+
+  // 6. + デコレーション (左下・アクセントカラー)
+  const plus2Sz = Math.round(h * 0.032);
+  parts.push(`drawtext=fontfile='${font}':text='+':fontsize=${plus2Sz}:fontcolor=0x${accent}FF:x=${textX}:y=${h - Math.round(h * 0.058)}`);
+
+  // 7. メインテキスト (フェードイン)
+  if (mainText) {
+    parts.push(`drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=${textX}:y=${mY}:${shadow}:alpha=${alpha}`);
+  }
+
+  // 8. サブテキスト (フェードイン)
+  if (subText) {
+    parts.push(`drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.85:x=${textX}:y=${sY}:${shadow}:alpha=${alpha}`);
+  }
+
   return parts.join(',');
 };
 
@@ -411,7 +430,7 @@ const renderClip = async (
     vfBase = `[0:v]format=yuv420p`;
   }
 
-  const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, dur, index);
+  const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, colorPrimary, dur, hasImage);
   const colorGrade = hasImage && !preview ? getColorGrade(style) : '';
   const fadeOut = dur - fadeDur;
 

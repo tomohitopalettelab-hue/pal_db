@@ -146,20 +146,26 @@ let _ffmpegBin: string | null = null;
 const getFFmpegBin = async (): Promise<string> => {
   if (_ffmpegBin) return _ffmpegBin;
 
-  // ffmpeg-static を優先: npm バンドル版は FFmpeg 6.1+ で最新 xfade transition に対応
-  // システム FFmpeg (Ubuntu 22.04 = 4.4.2) は古く flyeye 等が未対応のため後回し
+  // ffmpeg-static を優先: npm バンドル版は FFmpeg 6.1+
+  // Render.com では glibc / アーキテクチャ不一致で動作しない場合があるため
+  // 失敗時はシステム FFmpeg (Ubuntu 22.04 = 4.4.2) にフォールバックする
   if (_ffmpegStaticPath) {
     try {
       await runFFmpeg(_ffmpegStaticPath, ['-version'], 5000);
       console.log(`[ffmpeg] using ffmpeg-static: ${_ffmpegStaticPath}`);
       _ffmpegBin = _ffmpegStaticPath;
       return _ffmpegStaticPath;
-    } catch {}
+    } catch (e) {
+      console.warn('[ffmpeg] ffmpeg-static failed, falling back to system ffmpeg:', (e as Error).message.slice(0, 120));
+    }
+  } else {
+    console.warn('[ffmpeg] ffmpeg-static not found (not installed?), using system ffmpeg');
   }
 
-  // フォールバック: システム ffmpeg
+  // フォールバック: システム ffmpeg (Ubuntu 22.04 = FFmpeg 4.4.2)
   try {
     await runFFmpeg('ffmpeg', ['-version'], 5000);
+    console.log('[ffmpeg] using system ffmpeg');
     _ffmpegBin = 'ffmpeg';
     return 'ffmpeg';
   } catch {}
@@ -171,7 +177,9 @@ const getFFmpegBin = async (): Promise<string> => {
 // ─── xfade transition name map ────────────────────────────────────────────────
 // idx を使って同じ transition 種別でも毎回方向を変え単調さを防ぐ
 
-// ffmpeg-static (FFmpeg 6.1+) を使用するため全 xfade transition が利用可能
+// ffmpeg-static が利用できない場合はシステム FFmpeg (Ubuntu 22.04 = 4.4.2) を使用する。
+// そのため FFmpeg 4.4 で利用可能な xfade transition のみを使用する。
+// flyeye は FFmpeg 5.1+ 専用のため除外済み。
 const xfadeOf = (transition: string, idx: number): string => {
   const slides  = ['slideleft', 'slideright', 'slideup', 'slidedown']    as const;
   const wipes   = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']     as const;
@@ -190,7 +198,7 @@ const xfadeOf = (transition: string, idx: number): string => {
     'push':       covers,
     'film-roll':  slices,
     'circular':   ['circleopen', 'circleclose', 'radial'],
-    'flip':       ['fadegrays', 'pixelize', 'flyeye'],
+    'flip':       ['fadegrays', 'pixelize', 'fadeblack'],
     'blur':       ['hblur', 'fade', 'dissolve'],
     'stripe':     [...reveals, ...diags],
     'none':       ['fade'],

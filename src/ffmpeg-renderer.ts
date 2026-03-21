@@ -161,24 +161,31 @@ const getFFmpegBin = async (): Promise<string> => {
 };
 
 // ─── xfade transition name map ────────────────────────────────────────────────
+// idx を使って同じ transition 種別でも毎回方向を変え単調さを防ぐ
 
 const xfadeOf = (transition: string, idx: number): string => {
-  const dirs4 = ['slideleft', 'slideup', 'slideright', 'slidedown'] as const;
-  const map: Record<string, string> = {
-    fade:        'fade',
-    slide:       dirs4[idx % 4],
-    wipe:        'wipeleft',
-    'color-wipe':'fade',
-    zoom:        'smoothup',
-    bounce:      'fadewhite',
-    push:        dirs4[idx % 4],
-    'film-roll': 'fade',
-    circular:    'circleopen',
-    flip:        'fadegrays',
-    blur:        'fade',
-    none:        'fade',
+  const slides   = ['slideleft', 'slideright', 'slideup', 'slidedown'] as const;
+  const wipes    = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']  as const;
+  const covers   = ['coverleft', 'coverright', 'coverup', 'coverdown'] as const;
+  const reveals  = ['revealleft','revealright','revealup','revealdown'] as const;
+  const diags    = ['diagtl', 'diagtr', 'diagbl', 'diagbr']            as const;
+  const map: Record<string, readonly string[]> = {
+    'fade':       ['fade', 'dissolve', 'distance'],
+    'slide':      slides,
+    'wipe':       wipes,
+    'color-wipe': ['fadewhite', 'fadeblack', 'fadewhite', 'fadeblack'],
+    'zoom':       ['zoomin', 'smoothleft', 'smoothright', 'smoothup', 'smoothdown'],
+    'bounce':     ['fadewhite', 'distance', 'pixelize'],
+    'push':       covers,
+    'film-roll':  ['hlslice', 'hrslice', 'vuslice', 'vdslice'],
+    'circular':   ['circleopen', 'circleclose', 'radial'],
+    'flip':       ['fadegrays', 'pixelize', 'flyeye'],
+    'blur':       ['hblur', 'fade', 'dissolve'],
+    'stripe':     [...reveals, ...diags],
+    'none':       ['fade'],
   };
-  return map[transition] || 'fade';
+  const opts = map[transition] || ['fade'];
+  return opts[idx % opts.length];
 };
 
 // ─── Ken Burns / カメラワーク — overlay ベース実装 ───────────────────────────
@@ -419,6 +426,7 @@ interface Cut {
 
 const renderClip = async (
   cut: Cut, index: number, jobId: string,
+  isFirst: boolean, isLast: boolean,
   w: number, h: number,
   colorPrimary: string, colorAccent: string,
   font: string, ffmpeg: string,
@@ -428,11 +436,16 @@ const renderClip = async (
   const dur = cut.duration;
   const frames = Math.ceil(dur * 30);
   const clipPath = `${TMP}/${jobId}_clip_${index}.mp4`;
-  // fade_to_black は後半 45% をフェードアウト、通常は短めのクロスフェード用フェード
   const isFadeToBlack = cut.animation === 'fade_to_black';
-  const fadeDurIn  = Math.min(0.35, dur * 0.08);
-  const fadeDurOut = isFadeToBlack ? Math.min(dur * 0.45, 2.0) : Math.min(0.35, dur * 0.08);
-  const fadeDur    = fadeDurOut; // 後方互換（fadeOut 計算に使用）
+  // preview: 全クリップにフェード（concat demuxer でのフェードスルー効果）
+  // final:   先頭クリップのみフェードイン、末尾クリップのみフェードアウト
+  //          （中間クリップはxfadeフィルターがトランジションを担当）
+  const needFadeIn  = preview || isFirst;
+  const needFadeOut = preview || isLast || isFadeToBlack;
+  const fadeDurIn   = needFadeIn  ? Math.min(0.4, dur * 0.10) : 0;
+  const fadeDurOut  = isFadeToBlack ? Math.min(dur * 0.45, 2.0)
+                    : (needFadeOut ? Math.min(0.4, dur * 0.10) : 0);
+  const fadeDur     = fadeDurOut; // fadeOut 計算に使用
 
   // 解像度は renderWithFFmpeg 側で preview/final を切り替え済み → ここでは使用
   const pw = w;
@@ -508,8 +521,8 @@ const renderClip = async (
     ...(overlay ? [overlay] : []),
     ...(specialFx.length > 0 ? specialFx : []),
     `format=yuv420p`,
-    `fade=t=in:st=0:d=${fadeDurIn}`,
-    `fade=t=out:st=${fadeOut}:d=${fadeDurOut}`,
+    ...(fadeDurIn  > 0 ? [`fade=t=in:st=0:d=${fadeDurIn}`]           : []),
+    ...(fadeDurOut > 0 ? [`fade=t=out:st=${fadeOut}:d=${fadeDurOut}`] : []),
   ];
 
   // ultrafast: ルックアヘッド・B-frame を無効化してメモリ使用量を最小化
@@ -595,9 +608,11 @@ export const renderWithFFmpeg = async (
   // 画像は各クリップ完了後すぐ削除してディスク/メモリを解放
   const clipPaths: string[] = [];
   for (let i = 0; i < rawCuts.length; i++) {
+    const isFirst = i === 0;
+    const isLast  = i === rawCuts.length - 1;
     console.log(`[ffmpeg] cut ${i + 1}/${total}…`);
     await onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
-    const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg, preview, style);
+    const p = await renderClip(rawCuts[i], i, jobId, isFirst, isLast, w, h, colorPrimary, colorAccent, font, ffmpeg, preview, style);
     clipPaths.push(p);
     // 画像ファイルをクリップ完成直後に削除（ディスク節約）
     await fs.unlink(`${TMP}/${jobId}_img_${i}.jpg`).catch(() => {});
@@ -631,26 +646,43 @@ export const renderWithFFmpeg = async (
     ], 120000);
     await fs.unlink(listPath).catch(() => {});
   } else {
-    // 最終: concat demuxer（xfade廃止）
-    // xfade は複数入力を同時バッファするため Render.com 512MB 制限でOOMになる。
-    // 各クリップには fade-in/fade-out が既に適用済みのため、
-    // concat demuxer で順次結合するだけでスムーズな「フェードスルー」効果が得られる。
-    // メモリ使用量: 常に 1 クリップのみデコード → 大幅削減。
+    // 最終: 逐次 pairwise xfade — 常に 2 入力のみ処理するため OOM を回避
+    // 540×960 ハーフ解像度では xfade バッファ ~23MB、合計 ~100MB/ステップ → 512MB 以内
+    // 各ステップ後に前の intermediate を削除してディスク容量を節約
     concatPath = `${TMP}/${jobId}_concat.mp4`;
-    const listPath = `${TMP}/${jobId}_list.txt`;
-    const listContent = clipPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
-    await fs.writeFile(listPath, listContent, 'utf8');
 
-    await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
-    console.log('[ffmpeg] concat demuxer (final)…');
-    await runFFmpeg(ffmpeg, [
-      '-y', '-loglevel', 'error',
-      '-f', 'concat', '-safe', '0', '-i', listPath,
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-r', '30', '-threads', '1', '-an',
-      '-movflags', '+faststart',
-      concatPath,
-    ], 180000);
-    await fs.unlink(listPath).catch(() => {});
+    let accPath = clipPaths[0];          // 現在の積み上げファイル
+    let isAccIntermediate = false;        // clipPaths[0] は直接削除しないため
+    let accDuration = rawCuts[0].duration; // 積み上げ映像の合計秒数
+
+    for (let i = 1; i < clipPaths.length; i++) {
+      const isLastPair = i === clipPaths.length - 1;
+      const outPath    = isLastPair ? concatPath : `${TMP}/${jobId}_xf_${i}.mp4`;
+      const transName  = xfadeOf(rawCuts[i].transition, i);
+      // xfade の offset = 積み上げ映像の末尾から TRANS_DUR 前
+      const xOffset = Math.max(0, accDuration - TRANS_DUR).toFixed(3);
+
+      await onProgress?.({ step: 'concat', current: i, total, label: `トランジション ${i}/${total - 1} 適用中...` });
+      console.log(`[ffmpeg] xfade ${i}/${clipPaths.length - 1} (${transName}, offset=${xOffset}s)…`);
+
+      await runFFmpeg(ffmpeg, [
+        '-y', '-loglevel', 'error',
+        '-i', accPath, '-i', clipPaths[i],
+        '-filter_complex',
+          `[0:v][1:v]xfade=transition=${transName}:duration=${TRANS_DUR}:offset=${xOffset}[v]`,
+        '-map', '[v]',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-r', '30', '-threads', '1', '-an',
+        '-movflags', '+faststart',
+        outPath,
+      ], 300000); // 5 分 / ステップ
+
+      if (isAccIntermediate) {
+        await fs.unlink(accPath).catch(() => {}); // 前の intermediate を削除
+      }
+      isAccIntermediate = true;
+      accPath      = outPath;
+      accDuration += rawCuts[i].duration - TRANS_DUR;
+    }
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────
@@ -661,7 +693,9 @@ export const renderWithFFmpeg = async (
     try {
       await onProgress?.({ step: 'bgm', current: total, total, label: 'BGMを追加中...' });
       await downloadFile(bgmUrl, bgmPath);
-      const totalDur = rawCuts.reduce((a, c) => a + c.duration, 0) - TRANS_DUR * (rawCuts.length - 1);
+      // 実際の映像尺: preview=concat demuxer（重複なし）, final=xfade（TRANS_DUR × N-1 重複）
+      const totalDur  = rawCuts.reduce((a, c) => a + c.duration, 0)
+                      - (preview ? 0 : TRANS_DUR * (rawCuts.length - 1));
       const fadeStart = Math.max(0, totalDur - 1.5);
 
       console.log('[ffmpeg] adding BGM…');
@@ -671,10 +705,11 @@ export const renderWithFFmpeg = async (
         '-filter_complex',
         `[1:a]atrim=0:${totalDur.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(3)}:d=1.5,volume=0.65[a]`,
         '-map', '0:v', '-map', '[a]',
-        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest',
+        // -shortest は省略: totalDur を正確に計算済みなので映像/音声の長さが一致する
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
         '-movflags', '+faststart',
         outputPath,
-      ], 60000);
+      ], 90000);
     } catch (e) {
       console.warn('[ffmpeg] BGM failed, using video-only:', (e as Error).message);
       await fs.copyFile(concatPath, outputPath);
@@ -698,7 +733,8 @@ export const renderWithFFmpeg = async (
         '-i', logoPath,
         '-filter_complex',
           `[1:v]scale=${logoW}:-1:flags=lanczos,format=rgba[logo];` +
-          `[0:v][logo]overlay=x=W-w-${pad}:y=H-h-${pad}:format=auto`,
+          `[0:v][logo]overlay=x=W-w-${pad}:y=H-h-${pad}:format=auto[vout]`,
+        '-map', '[vout]', '-map', '0:a?',   // 0:a? = 音声なしでもエラーにしない
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20',
         '-c:a', 'copy',
         '-movflags', '+faststart',

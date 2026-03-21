@@ -181,47 +181,95 @@ const xfadeOf = (transition: string, idx: number): string => {
   return map[transition] || 'fade';
 };
 
-// ─── Ken Burns バリエーション — overlay ベース実装 ───────────────────────────
+// ─── Ken Burns / カメラワーク — overlay ベース実装 ───────────────────────────
 //
 // crop の eval=frame は古い FFmpeg ビルドで "Option not found" になる。
 // overlay フィルターは x,y を常に per-frame で評価（t = タイムスタンプ秒）
 // するため、eval オプション不要で全バージョンで動作する。
 //
 // 手法:
-//   1. 画像を 1.07× にスケールしパン余白を確保
+//   1. 画像をズーム倍率でスケールしパン余白を確保
 //   2. 黒キャンバス [0] の上に画像 [1] をオーバーレイ
 //   3. overlay の x,y 式に t を使ってカメラパンを表現
 //
+// animation 文字列から適切なカメラワークを選択する。
+// 未知の animation は index % 6 のフォールバックパターンを使用。
+//
 const getBurnsFilter = (
-  index: number, dur: number, w: number, h: number,
+  animation: string, index: number, dur: number, w: number, h: number,
 ): { sw: number; sh: number; xExpr: string; yExpr: string } => {
-  const ZOOM = 1.07;
-  const sw = Math.round(w * ZOOM);     // スケール後幅
-  const sh = Math.round(h * ZOOM);     // スケール後高さ
-  const dx = sw - w;                   // 横パン可能量 (px)
-  const dy = sh - h;                   // 縦パン可能量 (px)
-  const cx = Math.round(dx / 2);       // 中央X オフセット
-  const cy = Math.round(dy / 2);       // 中央Y オフセット
-  const d  = (dur + 0.5).toFixed(3);  // 分母に使う秒数（少し大きめにしてオーバーランを防ぐ）
+  // アニメーション種別によりズーム倍率を変える
+  // zoom_in/zoom_out 系: 大きめのズームでドリー感を演出
+  // static 系: ほぼ動かないため最小ズーム
+  const LARGE_MOVE = ['zoom_in_fast', 'fast_zoom_in', 'zoom_out', 'fast_zoom_out', 'diagonal_zoom'];
+  const MINIMAL    = ['static', 'wide_view', 'flash', 'brightness', 'blur', 'fade_to_black'];
+  const ZOOM = LARGE_MOVE.includes(animation) ? 1.32
+             : MINIMAL.includes(animation)    ? 1.02
+             : 1.07;
 
-  // overlay の x,y はキャンバス上の画像左上座標
-  // 負値 = 画像をキャンバス外にシフト → 別の領域が見える（パン効果）
+  const sw = Math.round(w * ZOOM);
+  const sh = Math.round(h * ZOOM);
+  const dx = sw - w;
+  const dy = sh - h;
+  const cx = Math.round(dx / 2);
+  const cy = Math.round(dy / 2);
+  const d  = (dur + 0.5).toFixed(3);
+
   let xExpr: string;
   let yExpr: string;
 
-  switch (index % 6) {
-    case 0: // 左上→右下ドリー（左上端から右下端へ）
-      xExpr = `floor(-${dx}*t/${d})`; yExpr = `floor(-${dy}*t/${d})`; break;
-    case 1: // 右下→左上ドリー（右下端から左上端へ）
-      xExpr = `floor(-${dx}*(1-t/${d}))`; yExpr = `floor(-${dy}*(1-t/${d}))`; break;
-    case 2: // 左→右パン（Y 中央固定）
+  switch (animation) {
+    // ─ ズーム系（コーナー→中心 = ドリープッシュ / 中心→コーナー = プルバック） ─
+    case 'zoom_in_fast':
+    case 'fast_zoom_in':
+      xExpr = `floor(-${cx}*t/${d})`; yExpr = `floor(-${cy}*t/${d})`; break;
+
+    case 'zoom_out':
+    case 'fast_zoom_out':
+      xExpr = `floor(-${cx}*(1-t/${d}))`; yExpr = `floor(-${cy}*(1-t/${d}))`; break;
+
+    // ─ 水平パン ─
+    case 'pan_right':
       xExpr = `floor(-${dx}*t/${d})`; yExpr = String(-cy); break;
-    case 3: // 右→左パン（Y 中央固定）
+    case 'pan_left':
       xExpr = `floor(-${dx}*(1-t/${d}))`; yExpr = String(-cy); break;
-    case 4: // 上→下パン（X 中央固定）
+
+    // ─ 垂直パン ─
+    case 'pan_down':
       xExpr = String(-cx); yExpr = `floor(-${dy}*t/${d})`; break;
-    default: // 中央固定（最も安定）
+    case 'pan_up':
+      xExpr = String(-cx); yExpr = `floor(-${dy}*(1-t/${d}))`; break;
+
+    // ─ 斜めズーム ─
+    case 'diagonal_zoom':
+      xExpr = `floor(-${cx}*t/${d})`; yExpr = `floor(-${dy}*t/${d})`; break;
+
+    // ─ Static 系（フィルターエフェクトのみ、カメラは中央固定） ─
+    case 'static':
+    case 'wide_view':
+    case 'flash':
+    case 'brightness':
+    case 'blur':
+    case 'fade_to_black':
       xExpr = String(-cx); yExpr = String(-cy); break;
+
+    default: {
+      // フォールバック: index ベースの 6 パターン
+      const FALLBACK_ZOOM = 1.07;
+      const fSw = Math.round(w * FALLBACK_ZOOM);
+      const fSh = Math.round(h * FALLBACK_ZOOM);
+      const fdx = fSw - w; const fdy = fSh - h;
+      const fcx = Math.round(fdx / 2); const fcy = Math.round(fdy / 2);
+      const patterns: [string, string][] = [
+        [`floor(-${fdx}*t/${d})`,        `floor(-${fdy}*t/${d})`],
+        [`floor(-${fdx}*(1-t/${d}))`,    `floor(-${fdy}*(1-t/${d}))`],
+        [`floor(-${fdx}*t/${d})`,        String(-fcy)],
+        [`floor(-${fdx}*(1-t/${d}))`,    String(-fcy)],
+        [String(-fcx),                   `floor(-${fdy}*t/${d})`],
+        [String(-fcx),                   String(-fcy)],
+      ];
+      return { sw: fSw, sh: fSh, xExpr: patterns[index % 6][0], yExpr: patterns[index % 6][1] };
+    }
   }
 
   return { sw, sh, xExpr, yExpr };
@@ -366,6 +414,7 @@ interface Cut {
   subText: string;
   layout: string;
   transition: string;
+  animation: string;
 }
 
 const renderClip = async (
@@ -379,7 +428,11 @@ const renderClip = async (
   const dur = cut.duration;
   const frames = Math.ceil(dur * 30);
   const clipPath = `${TMP}/${jobId}_clip_${index}.mp4`;
-  const fadeDur = Math.min(0.35, dur * 0.08);
+  // fade_to_black は後半 45% をフェードアウト、通常は短めのクロスフェード用フェード
+  const isFadeToBlack = cut.animation === 'fade_to_black';
+  const fadeDurIn  = Math.min(0.35, dur * 0.08);
+  const fadeDurOut = isFadeToBlack ? Math.min(dur * 0.45, 2.0) : Math.min(0.35, dur * 0.08);
+  const fadeDur    = fadeDurOut; // 後方互換（fadeOut 計算に使用）
 
   // 解像度は renderWithFFmpeg 側で preview/final を切り替え済み → ここでは使用
   const pw = w;
@@ -405,10 +458,8 @@ const renderClip = async (
         inputArgs = ['-loop', '1', '-t', String(dur), '-i', imgPath];
         vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},setpts=PTS-STARTPTS`;
       } else {
-        // 最終: Ken Burns — overlay ベース（crop eval=frame 非対応 FFmpeg 対策）
-        // [0] = 黒キャンバス (lavfi color)  [1] = 画像ファイル
-        // overlay フィルターは t (秒) で x,y を per-frame 評価するため eval オプション不要
-        const burns = getBurnsFilter(index, dur, pw, ph);
+        // 最終: Ken Burns / カメラワーク — overlay ベース（crop eval=frame 非対応 FFmpeg 対策）
+        const burns = getBurnsFilter(cut.animation, index, dur, pw, ph);
         inputArgs = [
           '-f', 'lavfi', '-i', `color=c=black:s=${pw}x${ph}:r=30`, // [0] canvas
           '-loop', '1', '-t', String(dur + 1), '-i', imgPath,       // [1] image
@@ -432,16 +483,33 @@ const renderClip = async (
 
   const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, colorPrimary, dur, hasImage);
   const colorGrade = hasImage && !preview ? getColorGrade(style) : '';
-  const fadeOut = dur - fadeDur;
+  const fadeOut = dur - fadeDurOut;
+
+  // ─ アニメーション別スペシャルエフェクト ─
+  // flash     : 白フラッシュ（冒頭 0.15s で白からノーマルに）
+  // brightness: 明るさ・彩度アップ（ポジティブ・感情カット）
+  // blur      : ソフトフォーカス（テキスト強調カット）
+  // 注: fade_to_black は fadeDurOut の延長で対応
+  const specialFx: string[] = [];
+  if (!preview) {
+    if (cut.animation === 'flash') {
+      specialFx.push('fade=t=in:st=0:d=0.12:color=white');
+    } else if (cut.animation === 'brightness') {
+      specialFx.push('eq=brightness=0.10:saturation=1.22:contrast=1.06');
+    } else if (cut.animation === 'blur') {
+      specialFx.push('boxblur=5:1');
+    }
+  }
 
   const filterChain = [
     vfBase,
     ...(colorGrade ? [colorGrade] : []),
     ...(hasImage && !preview ? ['vignette=angle=0.52'] : []),
     ...(overlay ? [overlay] : []),
+    ...(specialFx.length > 0 ? specialFx : []),
     `format=yuv420p`,
-    `fade=t=in:st=0:d=${fadeDur}`,
-    `fade=t=out:st=${fadeOut}:d=${fadeDur}`,
+    `fade=t=in:st=0:d=${fadeDurIn}`,
+    `fade=t=out:st=${fadeOut}:d=${fadeDurOut}`,
   ];
 
   // ultrafast: ルックアヘッド・B-frame を無効化してメモリ使用量を最小化
@@ -496,7 +564,7 @@ export const renderWithFFmpeg = async (
   const logoUrl      = String(payload?.logoUrl || '').startsWith('http') ? String(payload.logoUrl) : '';
 
   const rawCuts: Cut[] = ((Array.isArray(payload?.cuts) ? payload.cuts : []) as any[])
-    .slice(0, 5) // 最大5カット: xfade 同時デコード数を抑えメモリを節約
+    .slice(0, 20) // 最大20カット（60秒テンプレート対応）
     .map((c: any) => ({
       id:         String(c.id       || ''),
       duration:   Number(c.duration || 4),
@@ -505,6 +573,7 @@ export const renderWithFFmpeg = async (
       subText:    String(c.subText  || ''),
       layout:     String(c.layout   || 'bottom'),
       transition: String(c.transition || 'fade'),
+      animation:  String(c.animation  || ''),
     }));
 
   if (rawCuts.length === 0) throw new Error('cuts が空です');

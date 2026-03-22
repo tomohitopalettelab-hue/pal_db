@@ -665,43 +665,40 @@ export const renderWithFFmpeg = async (
     ], 120000);
     await fs.unlink(listPath).catch(() => {});
   } else {
-    // 最終: 逐次 pairwise xfade — 常に 2 入力のみ処理するため OOM を回避
-    // 540×960 ハーフ解像度では xfade バッファ ~23MB、合計 ~100MB/ステップ → 512MB 以内
-    // 各ステップ後に前の intermediate を削除してディスク容量を節約
+    // 最終: 単一パス xfade チェーン — 全クリップを1回のFFmpeg呼び出しで処理
+    // pairwise O(n²) の「蓄積動画を毎回再エンコード」問題を解消し O(n) に短縮
+    // 20 入力デコーダーが同時に走るが、540×960 半解像度では合計 ~100MB 以内
     concatPath = `${TMP}/${jobId}_concat.mp4`;
 
-    let accPath = clipPaths[0];          // 現在の積み上げファイル
-    let isAccIntermediate = false;        // clipPaths[0] は直接削除しないため
-    let accDuration = rawCuts[0].duration; // 積み上げ映像の合計秒数
+    await onProgress?.({ step: 'concat', current: 1, total, label: 'トランジションを適用中...' });
+    console.log(`[ffmpeg] single-pass xfade chain (${clipPaths.length} clips)…`);
 
-    for (let i = 1; i < clipPaths.length; i++) {
-      const isLastPair = i === clipPaths.length - 1;
-      const outPath    = isLastPair ? concatPath : `${TMP}/${jobId}_xf_${i}.mp4`;
-      const transName  = xfadeOf(rawCuts[i].transition, i);
-      // xfade の offset = 積み上げ映像の末尾から TRANS_DUR 前
-      const xOffset = Math.max(0, accDuration - TRANS_DUR).toFixed(3);
-
-      await onProgress?.({ step: 'concat', current: i, total, label: `トランジション ${i}/${total - 1} 適用中...` });
-      console.log(`[ffmpeg] xfade ${i}/${clipPaths.length - 1} (${transName}, offset=${xOffset}s)…`);
-
-      await runFFmpeg(ffmpeg, [
-        '-y', '-loglevel', 'error',
-        '-i', accPath, '-i', clipPaths[i],
-        '-filter_complex',
-          `[0:v][1:v]xfade=transition=${transName}:duration=${TRANS_DUR}:offset=${xOffset}[v]`,
-        '-map', '[v]',
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-r', '30', '-threads', '1', '-an',
-        '-movflags', '+faststart',
-        outPath,
-      ], 300000); // 5 分 / ステップ
-
-      if (isAccIntermediate) {
-        await fs.unlink(accPath).catch(() => {}); // 前の intermediate を削除
-      }
-      isAccIntermediate = true;
-      accPath      = outPath;
-      accDuration += rawCuts[i].duration - TRANS_DUR;
+    // filter_complex を組み立て: [0:v][1:v]xfade...[v01];[v01][2:v]xfade...[v02];...
+    const filterParts: string[] = [];
+    let cumOffset = 0;
+    for (let i = 0; i < clipPaths.length - 1; i++) {
+      // offset は前段の出力の末尾から TRANS_DUR 前 (累積)
+      cumOffset += rawCuts[i].duration - TRANS_DUR;
+      const transName = xfadeOf(rawCuts[i + 1].transition, i + 1);
+      const offset    = Math.max(0, cumOffset).toFixed(3);
+      const inLabel   = i === 0 ? '[0:v]' : `[xv${i}]`;
+      const outLabel  = i === clipPaths.length - 2 ? '[vout]' : `[xv${i + 1}]`;
+      filterParts.push(
+        `${inLabel}[${i + 1}:v]xfade=transition=${transName}:duration=${TRANS_DUR}:offset=${offset}${outLabel}`
+      );
+      console.log(`  xfade ${i + 1}/${clipPaths.length - 1}: ${transName} offset=${offset}s`);
     }
+
+    const inputs = clipPaths.flatMap(p => ['-i', p]);
+    await runFFmpeg(ffmpeg, [
+      '-y', '-loglevel', 'error',
+      ...inputs,
+      '-filter_complex', filterParts.join(';'),
+      '-map', '[vout]',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-r', '30', '-threads', '2', '-an',
+      '-movflags', '+faststart',
+      concatPath,
+    ], 600000); // 10 分タイムアウト（単一パスで全クリップを処理）
   }
 
   // ── 3. Add BGM ────────────────────────────────────────────────────────────

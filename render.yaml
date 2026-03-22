@@ -3,7 +3,15 @@ services:
     name: pal-db
     env: node
     plan: starter
-    buildCommand: apt-get update && apt-get install -y fonts-noto-cjk ffmpeg ; npm install ; npm run build
+    buildCommand: >-
+      apt-get update && apt-get install -y fonts-noto-cjk wget xz-utils ;
+      (wget -qO /tmp/ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+      && tar -xf /tmp/ffmpeg.tar.xz -C /tmp
+      && find /tmp -maxdepth 2 -name 'ffmpeg' -type f | head -1 | xargs -I{} mv {} /usr/local/bin/ffmpeg
+      && chmod +x /usr/local/bin/ffmpeg
+      && echo "[ffmpeg] static build installed: $(/usr/local/bin/ffmpeg -version 2>&1 | head -1)")
+      || (echo "[ffmpeg] static download failed, falling back to apt" && apt-get install -y ffmpeg) ;
+      npm install && npm run build
     startCommand: npm run start
     envVars:
       - key: PAL_DB_MEDIA_DIR

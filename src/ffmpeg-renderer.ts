@@ -146,30 +146,29 @@ let _ffmpegBin: string | null = null;
 const getFFmpegBin = async (): Promise<string> => {
   if (_ffmpegBin) return _ffmpegBin;
 
-  // ffmpeg-static を優先: npm バンドル版は FFmpeg 6.1+
-  // Render.com では glibc / アーキテクチャ不一致で動作しない場合があるため
-  // 失敗時はシステム FFmpeg (Ubuntu 22.04 = 4.4.2) にフォールバックする
-  if (_ffmpegStaticPath) {
+  // 優先順位:
+  //   1. /usr/local/bin/ffmpeg — render.yaml で DL した John Van Sickle 静的ビルド (最新)
+  //   2. ffmpeg-static npm パッケージ
+  //   3. システム ffmpeg (apt = 4.4.2 など古い可能性あり)
+
+  const candidates = [
+    '/usr/local/bin/ffmpeg',   // 静的ビルド (Render.com ビルドステップで配置)
+    ..._ffmpegStaticPath ? [_ffmpegStaticPath] : [],
+    'ffmpeg',                  // PATH 上のシステム ffmpeg
+  ];
+
+  for (const bin of candidates) {
     try {
-      await runFFmpeg(_ffmpegStaticPath, ['-version'], 5000);
-      console.log(`[ffmpeg] using ffmpeg-static: ${_ffmpegStaticPath}`);
-      _ffmpegBin = _ffmpegStaticPath;
-      return _ffmpegStaticPath;
+      await runFFmpeg(bin, ['-version'], 5000);
+      console.log(`[ffmpeg] using: ${bin}`);
+      _ffmpegBin = bin;
+      return bin;
     } catch (e) {
-      console.warn('[ffmpeg] ffmpeg-static failed, falling back to system ffmpeg:', (e as Error).message.slice(0, 120));
+      console.warn(`[ffmpeg] ${bin} not available:`, (e as Error).message.slice(0, 80));
     }
-  } else {
-    console.warn('[ffmpeg] ffmpeg-static not found (not installed?), using system ffmpeg');
   }
 
-  // フォールバック: システム ffmpeg (Ubuntu 22.04 = FFmpeg 4.4.2)
-  try {
-    await runFFmpeg('ffmpeg', ['-version'], 5000);
-    console.log('[ffmpeg] using system ffmpeg');
-    _ffmpegBin = 'ffmpeg';
-    return 'ffmpeg';
-  } catch {}
-
+  // 最終フォールバック (失敗しても呼び出し元でエラーになる)
   _ffmpegBin = 'ffmpeg';
   return 'ffmpeg';
 };
@@ -177,26 +176,29 @@ const getFFmpegBin = async (): Promise<string> => {
 // ─── xfade transition name map ────────────────────────────────────────────────
 // idx を使って同じ transition 種別でも毎回方向を変え単調さを防ぐ
 
-// system FFmpeg のバージョンが不明なため、FFmpeg 4.3 初期リリースで確実に
-// サポートされている最小限の xfade transition のみを使用する。
-// fade / wipe / slide / cover / dissolve / fadewhite / fadeblack のみ安全。
+// render.yaml で John Van Sickle 最新静的ビルドを /usr/local/bin/ffmpeg に配置済み。
+// FFmpeg 7.x 以上を前提として全 xfade transition を使用する。
 const xfadeOf = (transition: string, idx: number): string => {
-  const slides = ['slideleft', 'slideright', 'slideup', 'slidedown'] as const;
-  const wipes  = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']  as const;
-  const covers = ['coverleft', 'coverright', 'coverup', 'coverdown'] as const;
+  const slides  = ['slideleft', 'slideright', 'slideup', 'slidedown']    as const;
+  const wipes   = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']     as const;
+  const covers  = ['coverleft', 'coverright', 'coverup', 'coverdown']    as const;
+  const reveals = ['revealleft','revealright','revealup','revealdown']    as const;
+  const diags   = ['diagtl', 'diagtr', 'diagbl', 'diagbr']               as const;
+  const slices  = ['hlslice', 'hrslice', 'vuslice', 'vdslice']           as const;
+  const smooths = ['smoothleft','smoothright','smoothup','smoothdown']    as const;
   const map: Record<string, readonly string[]> = {
-    'fade':       ['fade', 'dissolve', 'fade'],
+    'fade':       ['fade', 'dissolve', 'distance'],
     'slide':      slides,
     'wipe':       wipes,
     'color-wipe': ['fadewhite', 'fadeblack'],
-    'zoom':       ['slideleft', 'slideright', 'slideup'],
-    'bounce':     ['fadewhite', 'fadeblack', 'dissolve'],
+    'zoom':       ['zoomin', ...smooths],
+    'bounce':     ['fadewhite', 'distance', 'pixelize'],
     'push':       covers,
-    'film-roll':  slides,
-    'circular':   ['wipeleft', 'wiperight', 'wipeup'],
-    'flip':       ['fade', 'dissolve', 'fadewhite'],
-    'blur':       ['fade', 'dissolve', 'fadeblack'],
-    'stripe':     wipes,
+    'film-roll':  slices,
+    'circular':   ['circleopen', 'circleclose', 'radial'],
+    'flip':       ['fadegrays', 'pixelize', 'flyeye'],
+    'blur':       ['hblur', 'fade', 'dissolve'],
+    'stripe':     [...reveals, ...diags],
     'none':       ['fade'],
   };
   const opts = map[transition] || ['fade'];

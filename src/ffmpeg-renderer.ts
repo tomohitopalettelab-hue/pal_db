@@ -177,30 +177,26 @@ const getFFmpegBin = async (): Promise<string> => {
 // ─── xfade transition name map ────────────────────────────────────────────────
 // idx を使って同じ transition 種別でも毎回方向を変え単調さを防ぐ
 
-// ffmpeg-static が利用できない場合はシステム FFmpeg (Ubuntu 22.04 = 4.4.2) を使用する。
-// そのため FFmpeg 4.4 で利用可能な xfade transition のみを使用する。
-// flyeye は FFmpeg 5.1+ 専用のため除外済み。
+// system FFmpeg のバージョンが不明なため、FFmpeg 4.3 初期リリースで確実に
+// サポートされている最小限の xfade transition のみを使用する。
+// fade / wipe / slide / cover / dissolve / fadewhite / fadeblack のみ安全。
 const xfadeOf = (transition: string, idx: number): string => {
-  const slides  = ['slideleft', 'slideright', 'slideup', 'slidedown']    as const;
-  const wipes   = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']     as const;
-  const covers  = ['coverleft', 'coverright', 'coverup', 'coverdown']    as const;
-  const reveals = ['revealleft','revealright','revealup','revealdown']    as const;
-  const diags   = ['diagtl', 'diagtr', 'diagbl', 'diagbr']               as const;
-  const slices  = ['hlslice', 'hrslice', 'vuslice', 'vdslice']           as const;
-  const smooths = ['smoothleft','smoothright','smoothup','smoothdown']    as const;
+  const slides = ['slideleft', 'slideright', 'slideup', 'slidedown'] as const;
+  const wipes  = ['wipeleft',  'wiperight',  'wipeup',  'wipedown']  as const;
+  const covers = ['coverleft', 'coverright', 'coverup', 'coverdown'] as const;
   const map: Record<string, readonly string[]> = {
-    'fade':       ['fade', 'dissolve', 'distance'],
+    'fade':       ['fade', 'dissolve', 'fade'],
     'slide':      slides,
     'wipe':       wipes,
     'color-wipe': ['fadewhite', 'fadeblack'],
-    'zoom':       ['zoomin', ...smooths],
-    'bounce':     ['fadewhite', 'distance', 'pixelize'],
+    'zoom':       ['slideleft', 'slideright', 'slideup'],
+    'bounce':     ['fadewhite', 'fadeblack', 'dissolve'],
     'push':       covers,
-    'film-roll':  slices,
-    'circular':   ['circleopen', 'circleclose', 'radial'],
-    'flip':       ['fadegrays', 'pixelize', 'fadeblack'],
-    'blur':       ['hblur', 'fade', 'dissolve'],
-    'stripe':     [...reveals, ...diags],
+    'film-roll':  slides,
+    'circular':   ['wipeleft', 'wiperight', 'wipeup'],
+    'flip':       ['fade', 'dissolve', 'fadewhite'],
+    'blur':       ['fade', 'dissolve', 'fadeblack'],
+    'stripe':     wipes,
     'none':       ['fade'],
   };
   const opts = map[transition] || ['fade'];

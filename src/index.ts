@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, createReadStream } from 'fs';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 import { renderWithFFmpeg, DATA_DIR } from './ffmpeg-renderer.js';
+import { startScheduler } from './pal-opt-scheduler.js';
 import {
   deleteAccountStatusOption,
   deleteAccount,
@@ -2421,6 +2422,46 @@ app.get('/api/pal-opt-posts', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/pal-opt-posts', async (req: Request, res: Response) => {
+  try {
+    await ensureTables();
+    const { sql } = await import('@vercel/postgres');
+    const b = req.body;
+    const id = String(b.id || crypto.randomUUID()).trim();
+    const paletteId = String(b.paletteId || '').trim().toUpperCase();
+    if (!paletteId) return res.status(400).json({ success: false, error: 'paletteId is required' });
+
+    const title = String(b.title || '');
+    const topic = String(b.topic || '');
+    const keywords = JSON.stringify(Array.isArray(b.keywords) ? b.keywords : []);
+    const targetAudience = b.targetAudience || null;
+    const imageUrls = JSON.stringify(Array.isArray(b.imageUrls) ? b.imageUrls : []);
+    const status = String(b.status || 'draft');
+    const instagramCaption = b.instagramCaption || null;
+    const instagramImageUrl = b.instagramImageUrl || null;
+    const gbpSummary = b.gbpSummary || null;
+    const gbpCallToAction = b.gbpCallToAction || null;
+
+    const { rows } = await sql`
+      INSERT INTO pal_opt_posts (
+        id, palette_id, title, topic, keywords, target_audience,
+        image_urls, status, instagram_caption, instagram_image_url,
+        gbp_summary, gbp_call_to_action
+      ) VALUES (
+        ${id}, ${paletteId}, ${title}, ${topic}, ${keywords}::jsonb, ${targetAudience},
+        ${imageUrls}::jsonb, ${status}, ${instagramCaption}, ${instagramImageUrl},
+        ${gbpSummary}, ${gbpCallToAction}
+      )
+      RETURNING *
+    `;
+
+    return res.json({ success: true, post: rows[0] });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to create pal_opt post' });
+  }
+});
+
 app.delete('/api/pal-opt-posts/:id', async (req: Request, res: Response) => {
   try {
     await ensureTables();
@@ -2456,6 +2497,7 @@ app.listen(port, async () => {
     } catch (e) {
       console.warn('[pal-db] startup cleanup warning:', e);
     }
+    startScheduler();
     console.log(`[pal-db] running on http://localhost:${port}`);
   } catch (error) {
     console.error('[pal-db] init error', error);

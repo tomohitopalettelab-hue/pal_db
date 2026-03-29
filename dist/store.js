@@ -39,6 +39,9 @@ const normalizeServiceKey = (value) => {
     if (compact === 'opt' || compact === 'pal_opt' || compact === 'palopt') {
         return 'pal_opt';
     }
+    if (compact === 'console' || compact === 'palette_console' || compact === 'paletteconsole' || compact === 'pal_console') {
+        return 'palette_console';
+    }
     return compact;
 };
 const hashPassword = (plainPassword) => {

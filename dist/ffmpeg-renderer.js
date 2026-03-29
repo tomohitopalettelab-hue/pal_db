@@ -141,89 +141,156 @@ let _ffmpegBin = null;
 const getFFmpegBin = async () => {
     if (_ffmpegBin)
         return _ffmpegBin;
-    // Try system ffmpeg first
-    try {
-        await runFFmpeg('ffmpeg', ['-version'], 5000);
-        _ffmpegBin = 'ffmpeg';
-        return 'ffmpeg';
+    // 優先順位:
+    //   1. /usr/local/bin/ffmpeg — render.yaml で DL した John Van Sickle 静的ビルド (最新)
+    //   2. ffmpeg-static npm パッケージ
+    //   3. システム ffmpeg (apt = 4.4.2 など古い可能性あり)
+    const candidates = [
+        '/usr/local/bin/ffmpeg', // 静的ビルド (Render.com ビルドステップで配置)
+        ..._ffmpegStaticPath ? [_ffmpegStaticPath] : [],
+        'ffmpeg', // PATH 上のシステム ffmpeg
+    ];
+    for (const bin of candidates) {
+        try {
+            await runFFmpeg(bin, ['-version'], 5000);
+            console.log(`[ffmpeg] using: ${bin}`);
+            _ffmpegBin = bin;
+            return bin;
+        }
+        catch (e) {
+            console.warn(`[ffmpeg] ${bin} not available:`, e.message.slice(0, 80));
+        }
     }
-    catch { }
-    // Fall back to ffmpeg-static
-    if (_ffmpegStaticPath) {
-        _ffmpegBin = _ffmpegStaticPath;
-        return _ffmpegStaticPath;
-    }
+    // 最終フォールバック (失敗しても呼び出し元でエラーになる)
     _ffmpegBin = 'ffmpeg';
     return 'ffmpeg';
 };
 // ─── xfade transition name map ────────────────────────────────────────────────
+// idx を使って同じ transition 種別でも毎回方向を変え単調さを防ぐ
+// render.yaml で John Van Sickle 最新静的ビルドを /usr/local/bin/ffmpeg に配置済み。
+// FFmpeg 7.x 以上を前提として全 xfade transition を使用する。
 const xfadeOf = (transition, idx) => {
-    const dirs4 = ['slideleft', 'slideup', 'slideright', 'slidedown'];
+    const slides = ['slideleft', 'slideright', 'slideup', 'slidedown'];
+    const wipes = ['wipeleft', 'wiperight', 'wipeup', 'wipedown'];
+    const covers = ['coverleft', 'coverright', 'coverup', 'coverdown'];
+    const reveals = ['revealleft', 'revealright', 'revealup', 'revealdown'];
+    const diags = ['diagtl', 'diagtr', 'diagbl', 'diagbr'];
+    const slices = ['hlslice', 'hrslice', 'vuslice', 'vdslice'];
+    const smooths = ['smoothleft', 'smoothright', 'smoothup', 'smoothdown'];
     const map = {
-        fade: 'fade',
-        slide: dirs4[idx % 4],
-        wipe: 'wipeleft',
-        'color-wipe': 'fade',
-        zoom: 'smoothup',
-        bounce: 'fadewhite',
-        push: dirs4[idx % 4],
-        'film-roll': 'fade',
-        circular: 'circleopen',
-        flip: 'fadegrays',
-        blur: 'fade',
-        none: 'fade',
+        'fade': ['fade', 'dissolve', 'distance'],
+        'slide': slides,
+        'wipe': wipes,
+        'color-wipe': ['fadewhite', 'fadeblack'],
+        'zoom': ['zoomin', ...smooths],
+        'bounce': ['fadewhite', 'distance', 'pixelize'],
+        'push': covers,
+        'film-roll': slices,
+        'circular': ['circleopen', 'circleclose', 'radial'],
+        'flip': ['fadegrays', 'pixelize', 'flyeye'],
+        'blur': ['hblur', 'fade', 'dissolve'],
+        'stripe': [...reveals, ...diags],
+        'none': ['fade'],
     };
-    return map[transition] || 'fade';
+    const opts = map[transition] || ['fade'];
+    return opts[idx % opts.length];
 };
-// ─── Ken Burns バリエーション — overlay ベース実装 ───────────────────────────
+// ─── Ken Burns / カメラワーク — overlay ベース実装 ───────────────────────────
 //
 // crop の eval=frame は古い FFmpeg ビルドで "Option not found" になる。
 // overlay フィルターは x,y を常に per-frame で評価（t = タイムスタンプ秒）
 // するため、eval オプション不要で全バージョンで動作する。
 //
 // 手法:
-//   1. 画像を 1.07× にスケールしパン余白を確保
+//   1. 画像をズーム倍率でスケールしパン余白を確保
 //   2. 黒キャンバス [0] の上に画像 [1] をオーバーレイ
 //   3. overlay の x,y 式に t を使ってカメラパンを表現
 //
-const getBurnsFilter = (index, dur, w, h) => {
-    const ZOOM = 1.07;
-    const sw = Math.round(w * ZOOM); // スケール後幅
-    const sh = Math.round(h * ZOOM); // スケール後高さ
-    const dx = sw - w; // 横パン可能量 (px)
-    const dy = sh - h; // 縦パン可能量 (px)
-    const cx = Math.round(dx / 2); // 中央X オフセット
-    const cy = Math.round(dy / 2); // 中央Y オフセット
-    const d = (dur + 0.5).toFixed(3); // 分母に使う秒数（少し大きめにしてオーバーランを防ぐ）
-    // overlay の x,y はキャンバス上の画像左上座標
-    // 負値 = 画像をキャンバス外にシフト → 別の領域が見える（パン効果）
+// animation 文字列から適切なカメラワークを選択する。
+// 未知の animation は index % 6 のフォールバックパターンを使用。
+//
+const getBurnsFilter = (animation, index, dur, w, h) => {
+    // アニメーション種別によりズーム倍率を変える
+    // zoom_in/zoom_out 系: 大きめのズームでドリー感を演出
+    // static 系: ほぼ動かないため最小ズーム
+    const LARGE_MOVE = ['zoom_in_fast', 'fast_zoom_in', 'zoom_out', 'fast_zoom_out', 'diagonal_zoom'];
+    const MINIMAL = ['static', 'wide_view', 'flash', 'brightness', 'blur', 'fade_to_black'];
+    const ZOOM = LARGE_MOVE.includes(animation) ? 1.32
+        : MINIMAL.includes(animation) ? 1.02
+            : 1.07;
+    const sw = Math.round(w * ZOOM);
+    const sh = Math.round(h * ZOOM);
+    const dx = sw - w;
+    const dy = sh - h;
+    const cx = Math.round(dx / 2);
+    const cy = Math.round(dy / 2);
+    const d = (dur + 0.5).toFixed(3);
     let xExpr;
     let yExpr;
-    switch (index % 6) {
-        case 0: // 左上→右下ドリー（左上端から右下端へ）
+    switch (animation) {
+        // ─ ズーム系（コーナー→中心 = ドリープッシュ / 中心→コーナー = プルバック） ─
+        case 'zoom_in_fast':
+        case 'fast_zoom_in':
+            xExpr = `floor(-${cx}*t/${d})`;
+            yExpr = `floor(-${cy}*t/${d})`;
+            break;
+        case 'zoom_out':
+        case 'fast_zoom_out':
+            xExpr = `floor(-${cx}*(1-t/${d}))`;
+            yExpr = `floor(-${cy}*(1-t/${d}))`;
+            break;
+        // ─ 水平パン ─
+        case 'pan_right':
             xExpr = `floor(-${dx}*t/${d})`;
+            yExpr = String(-cy);
+            break;
+        case 'pan_left':
+            xExpr = `floor(-${dx}*(1-t/${d}))`;
+            yExpr = String(-cy);
+            break;
+        // ─ 垂直パン ─
+        case 'pan_down':
+            xExpr = String(-cx);
             yExpr = `floor(-${dy}*t/${d})`;
             break;
-        case 1: // 右下→左上ドリー（右下端から左上端へ）
-            xExpr = `floor(-${dx}*(1-t/${d}))`;
+        case 'pan_up':
+            xExpr = String(-cx);
             yExpr = `floor(-${dy}*(1-t/${d}))`;
             break;
-        case 2: // 左→右パン（Y 中央固定）
-            xExpr = `floor(-${dx}*t/${d})`;
-            yExpr = String(-cy);
-            break;
-        case 3: // 右→左パン（Y 中央固定）
-            xExpr = `floor(-${dx}*(1-t/${d}))`;
-            yExpr = String(-cy);
-            break;
-        case 4: // 上→下パン（X 中央固定）
-            xExpr = String(-cx);
+        // ─ 斜めズーム ─
+        case 'diagonal_zoom':
+            xExpr = `floor(-${cx}*t/${d})`;
             yExpr = `floor(-${dy}*t/${d})`;
             break;
-        default: // 中央固定（最も安定）
+        // ─ Static 系（フィルターエフェクトのみ、カメラは中央固定） ─
+        case 'static':
+        case 'wide_view':
+        case 'flash':
+        case 'brightness':
+        case 'blur':
+        case 'fade_to_black':
             xExpr = String(-cx);
             yExpr = String(-cy);
             break;
+        default: {
+            // フォールバック: index ベースの 6 パターン
+            const FALLBACK_ZOOM = 1.07;
+            const fSw = Math.round(w * FALLBACK_ZOOM);
+            const fSh = Math.round(h * FALLBACK_ZOOM);
+            const fdx = fSw - w;
+            const fdy = fSh - h;
+            const fcx = Math.round(fdx / 2);
+            const fcy = Math.round(fdy / 2);
+            const patterns = [
+                [`floor(-${fdx}*t/${d})`, `floor(-${fdy}*t/${d})`],
+                [`floor(-${fdx}*(1-t/${d}))`, `floor(-${fdy}*(1-t/${d}))`],
+                [`floor(-${fdx}*t/${d})`, String(-fcy)],
+                [`floor(-${fdx}*(1-t/${d}))`, String(-fcy)],
+                [String(-fcx), `floor(-${fdy}*t/${d})`],
+                [String(-fcx), String(-fcy)],
+            ];
+            return { sw: fSw, sh: fSh, xExpr: patterns[index % 6][0], yExpr: patterns[index % 6][1] };
+        }
     }
     return { sw, sh, xExpr, yExpr };
 };
@@ -246,86 +313,113 @@ const getColorGrade = (style) => {
             return 'eq=contrast=1.08:brightness=0.01:saturation=1.15';
     }
 };
-// ─── Shape + Text overlay filter ─────────────────────────────────────────────
-const overlayFilter = (mainText, subText, layout, w, h, font, colorAccent, dur, cutIndex) => {
+// ─── Shape + Text overlay filter (CSS card デザインに準拠) ───────────────────
+//
+// CSS プレビューカード (CutPreviewCard) の以下要素を FFmpeg で再現:
+//   pv-strip  : 左側縦アクセントストリップ (accent色, 幅11.5%)
+//   白ドット   : ストリップ上部の白い小ドット
+//   グラデ     : 画像上の半透明オーバーレイ (layout別グラデーション)
+//   アクセントライン: テキスト上の短い横線
+//   pv-plus1/2: 「+」デコレーション
+//   pv-main/sub: テキスト (ストリップ右から左揃え, フェードイン)
+//
+const overlayFilter = (mainText, subText, layout, w, h, font, colorAccent, colorPrimary, dur, hasImage) => {
     const isPortrait = h > w;
-    const mSize = Math.round(h * (isPortrait ? 0.036 : 0.042));
-    const sSize = Math.round(h * (isPortrait ? 0.021 : 0.025));
-    const margin = Math.round(h * (isPortrait ? 0.065 : 0.055));
-    const bandH = Math.round(h * (isPortrait ? 0.27 : 0.23));
-    const fadeIn = Math.min(0.6, dur * 0.15).toFixed(2);
-    const slide = Math.round(h * 0.035); // スライド量（px）
     const accent = colorAccent.replace('#', '');
+    const primary = colorPrimary.replace('#', '');
+    // ─ CSS card 比率に合わせたサイズ計算 ─
+    const stripW = Math.round(w * 0.115); // 左ストリップ幅 (11.5%)
+    const textX = stripW + Math.round(w * 0.028); // テキスト開始X
+    const mSize = Math.round(h * (isPortrait ? 0.034 : 0.042));
+    const sSize = Math.round(h * (isPortrait ? 0.020 : 0.025));
+    const margin = Math.round(h * 0.065);
+    const lineW = Math.round(w * 0.060); // アクセントライン幅
+    const lineH = Math.max(2, Math.round(h * 0.006)); // アクセントライン高さ
+    const CJK = 1.45;
+    const mActH = Math.round(mSize * CJK);
+    const sActH = Math.round(sSize * CJK);
+    const lineGap = Math.round(mSize * 0.40);
+    const lineToText = Math.round(mSize * 0.35);
     const atTop = layout === 'top' || layout === 'billboard';
     const atCenter = layout === 'center';
-    // NotoSansCJK の実描画高さは fontsize の約1.45倍（ascender+descender込み）
-    // Y座標計算ではこの実高さを使わないと重なりが発生する
-    const CJK = 1.45;
-    const mActH = Math.round(mSize * CJK); // メインテキスト実描画高さ
-    const sActH = Math.round(sSize * CJK); // サブテキスト実描画高さ
-    const lineGap = Math.round(mSize * 0.35); // テキスト間の追加余白
-    // 数値で Y 位置を計算（スライドアニメーション用）
-    // ※ drawtext の y= はバウンディングボックス上端座標
-    const mYpx = atTop
-        ? margin
-        : atCenter
-            ? Math.round(h / 2) - Math.round((mActH + (subText ? lineGap + sActH : 0)) / 2)
-            : h - margin - (subText ? sActH + lineGap + mActH : mActH);
-    const sYpx = atTop
-        ? margin + mActH + lineGap
-        : atCenter
-            ? Math.round(h / 2) + Math.round((mActH + (mainText ? lineGap : 0)) / 2) - Math.round(sActH / 2)
-            : h - margin - sActH;
-    // スライド方向: top は上から、それ以外は下から
-    const dir = atTop ? -1 : 1;
-    const mYanim = `'if(lt(t,${fadeIn}),${mYpx}+${dir * slide}*(1-t/${fadeIn}),${mYpx})'`;
-    const sYanim = `'if(lt(t,${fadeIn}),${sYpx}+${dir * slide}*(1-t/${fadeIn}),${sYpx})'`;
-    const parts = [];
-    // ── シェイプ: レイアウト別に異なるデザイン ────────────────────
+    // ─ アクセントライン・テキスト Y 座標 ─
+    let lineY, mY, sY;
     if (atTop) {
-        // グラデーション風の上部バンド（2段重ね）
-        parts.push(`drawbox=x=0:y=0:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
-        parts.push(`drawbox=x=0:y=0:w=iw:h=${Math.round(bandH * 0.5)}:color=0x000000@0.2:t=fill`);
-        parts.push(`drawbox=x=0:y=${bandH - 3}:w=iw:h=3:color=0x${accent}@0.95:t=fill`);
-        // 左端縦ライン
-        parts.push(`drawbox=x=0:y=0:w=4:h=${bandH}:color=0x${accent}@0.95:t=fill`);
+        lineY = margin;
+        mY = lineY + lineH + lineToText;
+        sY = mY + mActH + lineGap;
     }
     else if (atCenter) {
-        // 中央バンド + 両サイドライン
-        const bandY = Math.round(h / 2 - bandH / 2);
-        parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
-        parts.push(`drawbox=x=0:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.95:t=fill`);
-        parts.push(`drawbox=x=iw-5:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.95:t=fill`);
-        parts.push(`drawbox=x=0:y=${bandY - 1}:w=iw:h=2:color=0x${accent}@0.5:t=fill`);
-        parts.push(`drawbox=x=0:y=${bandY + bandH}:w=iw:h=2:color=0x${accent}@0.5:t=fill`);
+        const totalH = lineH + lineToText + mActH + (subText ? lineGap + sActH : 0);
+        lineY = Math.round(h / 2 - totalH / 2);
+        mY = lineY + lineH + lineToText;
+        sY = mY + mActH + lineGap;
     }
     else {
-        // 下部バンド: グラデーション風（濃淡2段）+ トップライン
-        const bandY = h - bandH;
-        parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=${bandH}:color=0x000000@0.6:t=fill`);
-        parts.push(`drawbox=x=0:y=${bandY + Math.round(bandH * 0.5)}:w=iw:h=${Math.round(bandH * 0.5)}:color=0x000000@0.2:t=fill`);
-        parts.push(`drawbox=x=0:y=${bandY}:w=iw:h=3:color=0x${accent}@0.95:t=fill`);
-        // カット番号によって右端装飾を変える
-        if (cutIndex % 2 === 0) {
-            parts.push(`drawbox=x=iw-5:y=${bandY}:w=5:h=${bandH}:color=0x${accent}@0.5:t=fill`);
-        }
+        sY = h - margin - sActH;
+        mY = sY - lineGap - mActH;
+        lineY = mY - lineToText - lineH;
     }
-    if (!mainText && !subText)
-        return parts.join(',');
-    // ── テキスト: スライドイン + フェードイン ────────────────────
+    const fadeIn = Math.min(0.6, dur * 0.15).toFixed(2);
     const shadow = 'shadowcolor=black@0.8:shadowx=2:shadowy=2';
     const alpha = `'if(lt(t,${fadeIn}),t/${fadeIn},1)'`;
-    if (mainText)
-        parts.push(`drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=(w-text_w)/2:y=${mYanim}:${shadow}:alpha=${alpha}`);
-    if (subText)
-        parts.push(`drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.9:x=(w-text_w)/2:y=${sYanim}:${shadow}:alpha=${alpha}`);
+    const parts = [];
+    // 1. 画像グラデーションオーバーレイ (CSS の gradient overlay に対応)
+    if (hasImage) {
+        if (atTop) {
+            // linear-gradient(160deg, primary+BB 0%, primary+44 45%, transparent)
+            parts.push(`drawbox=x=${stripW}:y=0:w=iw:h=${Math.round(h * 0.50)}:color=0x${primary}@0.73:t=fill`);
+            parts.push(`drawbox=x=${stripW}:y=${Math.round(h * 0.50)}:w=iw:h=${Math.round(h * 0.25)}:color=0x${primary}@0.27:t=fill`);
+        }
+        else if (atCenter) {
+            // colorPrimary + alpha 0.33
+            parts.push(`drawbox=x=${stripW}:y=0:w=iw:h=ih:color=0x${primary}@0.33:t=fill`);
+        }
+        else {
+            // linear-gradient(to top, primary+DD 0%, primary+66 40%, transparent 75%)
+            const darkY = Math.round(h * 0.60);
+            parts.push(`drawbox=x=${stripW}:y=${darkY}:w=iw:h=${h - darkY}:color=0x${primary}@0.87:t=fill`);
+            parts.push(`drawbox=x=${stripW}:y=${Math.round(h * 0.25)}:w=iw:h=${Math.round(h * 0.35)}:color=0x${primary}@0.40:t=fill`);
+        }
+    }
+    // 2. 左アクセントストリップ (pv-strip)
+    parts.push(`drawbox=x=0:y=0:w=${stripW}:h=ih:color=0x${accent}FF:t=fill`);
+    // 3. ストリップ上部の白ドット
+    const dotSz = Math.max(3, Math.round(stripW * 0.18));
+    const dotX = Math.round((stripW - dotSz) / 2);
+    parts.push(`drawbox=x=${dotX}:y=${Math.round(h * 0.025)}:w=${dotSz}:h=${dotSz}:color=0xFFFFFF@0.95:t=fill`);
+    // 4. テキスト上のアクセントライン
+    parts.push(`drawbox=x=${textX}:y=${lineY}:w=${lineW}:h=${lineH}:color=0x${accent}FF:t=fill`);
+    // 5. + デコレーション (右上・白)
+    const plus1Sz = Math.round(h * 0.045);
+    parts.push(`drawtext=fontfile='${font}':text='+':fontsize=${plus1Sz}:fontcolor=0xFFFFFF@0.65:x=${w - Math.round(w * 0.05)}:y=${Math.round(h * 0.018)}`);
+    // 6. + デコレーション (左下・アクセントカラー)
+    const plus2Sz = Math.round(h * 0.032);
+    parts.push(`drawtext=fontfile='${font}':text='+':fontsize=${plus2Sz}:fontcolor=0x${accent}FF:x=${textX}:y=${h - Math.round(h * 0.058)}`);
+    // 7. メインテキスト (フェードイン)
+    if (mainText) {
+        parts.push(`drawtext=fontfile='${font}':text='${esc(mainText)}':fontsize=${mSize}:fontcolor=white:x=${textX}:y=${mY}:${shadow}:alpha=${alpha}`);
+    }
+    // 8. サブテキスト (フェードイン)
+    if (subText) {
+        parts.push(`drawtext=fontfile='${font}':text='${esc(subText)}':fontsize=${sSize}:fontcolor=white@0.85:x=${textX}:y=${sY}:${shadow}:alpha=${alpha}`);
+    }
     return parts.join(',');
 };
-const renderClip = async (cut, index, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg, preview = false, style = 'standard') => {
+const renderClip = async (cut, index, jobId, isFirst, isLast, w, h, colorPrimary, colorAccent, font, ffmpeg, preview = false, style = 'standard') => {
     const dur = cut.duration;
     const frames = Math.ceil(dur * 30);
     const clipPath = `${TMP}/${jobId}_clip_${index}.mp4`;
-    const fadeDur = Math.min(0.35, dur * 0.08);
+    const isFadeToBlack = cut.animation === 'fade_to_black';
+    // preview: 全クリップにフェード（concat demuxer でのフェードスルー効果）
+    // final:   先頭クリップのみフェードイン、末尾クリップのみフェードアウト
+    //          （中間クリップはxfadeフィルターがトランジションを担当）
+    const needFadeIn = preview || isFirst;
+    const needFadeOut = preview || isLast || isFadeToBlack;
+    const fadeDurIn = needFadeIn ? Math.min(0.4, dur * 0.10) : 0;
+    const fadeDurOut = isFadeToBlack ? Math.min(dur * 0.45, 2.0)
+        : (needFadeOut ? Math.min(0.4, dur * 0.10) : 0);
+    const fadeDur = fadeDurOut; // fadeOut 計算に使用
     // 解像度は renderWithFFmpeg 側で preview/final を切り替え済み → ここでは使用
     const pw = w;
     const ph = h;
@@ -349,10 +443,8 @@ const renderClip = async (cut, index, jobId, w, h, colorPrimary, colorAccent, fo
                 vfBase = `[0:v]scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph},setpts=PTS-STARTPTS`;
             }
             else {
-                // 最終: Ken Burns — overlay ベース（crop eval=frame 非対応 FFmpeg 対策）
-                // [0] = 黒キャンバス (lavfi color)  [1] = 画像ファイル
-                // overlay フィルターは t (秒) で x,y を per-frame 評価するため eval オプション不要
-                const burns = getBurnsFilter(index, dur, pw, ph);
+                // 最終: Ken Burns / カメラワーク — overlay ベース（crop eval=frame 非対応 FFmpeg 対策）
+                const burns = getBurnsFilter(cut.animation, index, dur, pw, ph);
                 inputArgs = [
                     '-f', 'lavfi', '-i', `color=c=black:s=${pw}x${ph}:r=30`, // [0] canvas
                     '-loop', '1', '-t', String(dur + 1), '-i', imgPath, // [1] image
@@ -375,19 +467,39 @@ const renderClip = async (cut, index, jobId, w, h, colorPrimary, colorAccent, fo
         inputArgs = ['-f', 'lavfi', '-t', String(dur), '-i', `color=c=${hexToFF(colorPrimary)}:s=${pw}x${ph}:r=30`];
         vfBase = `[0:v]format=yuv420p`;
     }
-    const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, dur, index);
+    const overlay = overlayFilter(cut.mainText, cut.subText, cut.layout, pw, ph, font, colorAccent, colorPrimary, dur, hasImage);
     const colorGrade = hasImage && !preview ? getColorGrade(style) : '';
-    const fadeOut = dur - fadeDur;
+    const fadeOut = dur - fadeDurOut;
+    // ─ アニメーション別スペシャルエフェクト ─
+    // flash     : 白フラッシュ（冒頭 0.15s で白からノーマルに）
+    // brightness: 明るさ・彩度アップ（ポジティブ・感情カット）
+    // blur      : ソフトフォーカス（テキスト強調カット）
+    // 注: fade_to_black は fadeDurOut の延長で対応
+    const specialFx = [];
+    if (!preview) {
+        if (cut.animation === 'flash') {
+            specialFx.push('fade=t=in:st=0:d=0.12:color=white');
+        }
+        else if (cut.animation === 'brightness') {
+            specialFx.push('eq=brightness=0.10:saturation=1.22:contrast=1.06');
+        }
+        else if (cut.animation === 'blur') {
+            specialFx.push('boxblur=5:1');
+        }
+    }
     const filterChain = [
         vfBase,
         ...(colorGrade ? [colorGrade] : []),
         ...(hasImage && !preview ? ['vignette=angle=0.52'] : []),
         ...(overlay ? [overlay] : []),
+        ...(specialFx.length > 0 ? specialFx : []),
         `format=yuv420p`,
-        `fade=t=in:st=0:d=${fadeDur}`,
-        `fade=t=out:st=${fadeOut}:d=${fadeDur}`,
+        ...(fadeDurIn > 0 ? [`fade=t=in:st=0:d=${fadeDurIn}`] : []),
+        ...(fadeDurOut > 0 ? [`fade=t=out:st=${fadeOut}:d=${fadeDurOut}`] : []),
     ];
-    const preset = preview ? 'veryfast' : 'fast';
+    // ultrafast: ルックアヘッド・B-frame を無効化してメモリ使用量を最小化
+    // Render.com 512MB 制限対策（fast は lookahead で +90MB 使用する）
+    const preset = 'ultrafast';
     const crf = preview ? 26 : 20;
     console.log(`[ffmpeg] clip ${index} (${pw}x${ph}, preview=${preview})`);
     await runFFmpeg(ffmpeg, [
@@ -395,7 +507,7 @@ const renderClip = async (cut, index, jobId, w, h, colorPrimary, colorAccent, fo
         ...inputArgs,
         '-filter_complex', filterChain.join(','),
         '-c:v', 'libx264', '-preset', preset,
-        '-crf', String(crf), '-r', '30', '-threads', '2', '-an',
+        '-crf', String(crf), '-r', '30', '-threads', '1', '-an',
         clipPath,
     ]);
     return clipPath;
@@ -406,16 +518,19 @@ export const renderWithFFmpeg = async (payload, jobId, onProgress, preview = fal
     console.log(`[ffmpeg] bin=${ffmpeg}, font=${font}, preview=${preview}`);
     const destination = String(payload?.destination || payload?.purpose || 'instagram_reel');
     const [fw, fh] = DESTINATION_DIMENSIONS[destination] || [1080, 1920];
-    // プレビューは半解像度（ピクセル数1/4でzoompanが大幅高速化）
-    const w = preview ? Math.round(fw / 2) : fw;
-    const h = preview ? Math.round(fh / 2) : fh;
+    // Render.com 512MB 制限対策: preview/final ともに半解像度（540x960 等）
+    // 1080x1920 フルHDは Ken Burns overlay だけで ~300MB使用しOOMになる
+    // 半解像度でフレームバッファが 1/4 に削減され余裕が生まれる
+    const w = Math.round(fw / 2);
+    const h = Math.round(fh / 2);
     const colorPrimary = String(payload?.colorPrimary || '#1A1A2E');
     const colorAccent = String(payload?.colorAccent || '#E95464');
     const style = String(payload?.style || 'standard');
     const bgmKey = String(payload?.bgm || '');
     const bgmUrl = bgmKey.startsWith('http') ? bgmKey : (BGM_URLS[bgmKey] || '');
+    const logoUrl = String(payload?.logoUrl || '').startsWith('http') ? String(payload.logoUrl) : '';
     const rawCuts = (Array.isArray(payload?.cuts) ? payload.cuts : [])
-        .slice(0, 5) // 最大5カット: xfade 同時デコード数を抑えメモリを節約
+        .slice(0, 20) // 最大20カット（60秒テンプレート対応）
         .map((c) => ({
         id: String(c.id || ''),
         duration: Number(c.duration || 4),
@@ -424,6 +539,7 @@ export const renderWithFFmpeg = async (payload, jobId, onProgress, preview = fal
         subText: String(c.subText || ''),
         layout: String(c.layout || 'bottom'),
         transition: String(c.transition || 'fade'),
+        animation: String(c.animation || ''),
     }));
     if (rawCuts.length === 0)
         throw new Error('cuts が空です');
@@ -442,9 +558,11 @@ export const renderWithFFmpeg = async (payload, jobId, onProgress, preview = fal
     // 画像は各クリップ完了後すぐ削除してディスク/メモリを解放
     const clipPaths = [];
     for (let i = 0; i < rawCuts.length; i++) {
+        const isFirst = i === 0;
+        const isLast = i === rawCuts.length - 1;
         console.log(`[ffmpeg] cut ${i + 1}/${total}…`);
         await onProgress?.({ step: 'clip', current: i, total, label: `カット ${i + 1} / ${total} をレンダリング中...` });
-        const p = await renderClip(rawCuts[i], i, jobId, w, h, colorPrimary, colorAccent, font, ffmpeg, preview, style);
+        const p = await renderClip(rawCuts[i], i, jobId, isFirst, isLast, w, h, colorPrimary, colorAccent, font, ffmpeg, preview, style);
         clipPaths.push(p);
         // 画像ファイルをクリップ完成直後に削除（ディスク節約）
         await fs.unlink(`${TMP}/${jobId}_img_${i}.jpg`).catch(() => { });
@@ -477,39 +595,35 @@ export const renderWithFFmpeg = async (payload, jobId, onProgress, preview = fal
         await fs.unlink(listPath).catch(() => { });
     }
     else {
-        // 最終: 2 クリップずつ xfade で逐次結合
-        // これにより FFmpeg が同時にデコードするストリームを常に 2 本に限定できる
-        await onProgress?.({ step: 'concat', current: total, total, label: 'クリップを結合中...' });
-        console.log('[ffmpeg] sequential pairwise xfade…');
-        let currentPath = clipPaths[0];
-        let currentDur = rawCuts[0].duration;
-        for (let i = 1; i < clipPaths.length; i++) {
-            const nextPath = clipPaths[i];
-            const nextDur = rawCuts[i].duration;
-            const trans = xfadeOf(rawCuts[i].transition, i - 1);
-            const offset = Math.max(0, currentDur - TRANS_DUR);
-            const outPath = `${TMP}/${jobId}_merge_${i}.mp4`;
-            console.log(`[ffmpeg] xfade merge ${i}/${clipPaths.length - 1}: trans=${trans}, offset=${offset.toFixed(3)}s`);
-            await runFFmpeg(ffmpeg, [
-                '-y', '-loglevel', 'error',
-                '-i', currentPath,
-                '-i', nextPath,
-                '-filter_complex',
-                `[0:v][1:v]xfade=transition=${trans}:duration=${TRANS_DUR}:offset=${offset.toFixed(3)}[vout]`,
-                '-map', '[vout]',
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-r', '30', '-threads', '1', '-an',
-                '-movflags', '+faststart',
-                outPath,
-            ], 300000);
-            // 前の中間ファイルを削除（元の clipPath は残す ← cleanup ステップで削除）
-            if (currentPath !== clipPaths[0] && !clipPaths.includes(currentPath)) {
-                await fs.unlink(currentPath).catch(() => { });
-            }
-            currentPath = outPath;
-            currentDur += nextDur - TRANS_DUR;
-            await onProgress?.({ step: 'concat', current: i, total, label: `結合中 ${i}/${clipPaths.length - 1}...` });
+        // 最終: 単一パス xfade チェーン — 全クリップを1回のFFmpeg呼び出しで処理
+        // pairwise O(n²) の「蓄積動画を毎回再エンコード」問題を解消し O(n) に短縮
+        // 20 入力デコーダーが同時に走るが、540×960 半解像度では合計 ~100MB 以内
+        concatPath = `${TMP}/${jobId}_concat.mp4`;
+        await onProgress?.({ step: 'concat', current: 1, total, label: 'トランジションを適用中...' });
+        console.log(`[ffmpeg] single-pass xfade chain (${clipPaths.length} clips)…`);
+        // filter_complex を組み立て: [0:v][1:v]xfade...[v01];[v01][2:v]xfade...[v02];...
+        const filterParts = [];
+        let cumOffset = 0;
+        for (let i = 0; i < clipPaths.length - 1; i++) {
+            // offset は前段の出力の末尾から TRANS_DUR 前 (累積)
+            cumOffset += rawCuts[i].duration - TRANS_DUR;
+            const transName = xfadeOf(rawCuts[i + 1].transition, i + 1);
+            const offset = Math.max(0, cumOffset).toFixed(3);
+            const inLabel = i === 0 ? '[0:v]' : `[xv${i}]`;
+            const outLabel = i === clipPaths.length - 2 ? '[vout]' : `[xv${i + 1}]`;
+            filterParts.push(`${inLabel}[${i + 1}:v]xfade=transition=${transName}:duration=${TRANS_DUR}:offset=${offset}${outLabel}`);
+            console.log(`  xfade ${i + 1}/${clipPaths.length - 1}: ${transName} offset=${offset}s`);
         }
-        concatPath = currentPath;
+        const inputs = clipPaths.flatMap(p => ['-i', p]);
+        await runFFmpeg(ffmpeg, [
+            '-y', '-loglevel', 'error',
+            ...inputs,
+            '-filter_complex', filterParts.join(';'),
+            '-map', '[vout]',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-r', '30', '-threads', '2', '-an',
+            '-movflags', '+faststart',
+            concatPath,
+        ], 600000); // 10 分タイムアウト（単一パスで全クリップを処理）
     }
     // ── 3. Add BGM ────────────────────────────────────────────────────────────
     const outputPath = `${TMP}/${jobId}_output.mp4`;
@@ -518,7 +632,9 @@ export const renderWithFFmpeg = async (payload, jobId, onProgress, preview = fal
         try {
             await onProgress?.({ step: 'bgm', current: total, total, label: 'BGMを追加中...' });
             await downloadFile(bgmUrl, bgmPath);
-            const totalDur = rawCuts.reduce((a, c) => a + c.duration, 0) - TRANS_DUR * (rawCuts.length - 1);
+            // 実際の映像尺: preview=concat demuxer（重複なし）, final=xfade（TRANS_DUR × N-1 重複）
+            const totalDur = rawCuts.reduce((a, c) => a + c.duration, 0)
+                - (preview ? 0 : TRANS_DUR * (rawCuts.length - 1));
             const fadeStart = Math.max(0, totalDur - 1.5);
             console.log('[ffmpeg] adding BGM…');
             await runFFmpeg(ffmpeg, [
@@ -527,10 +643,11 @@ export const renderWithFFmpeg = async (payload, jobId, onProgress, preview = fal
                 '-filter_complex',
                 `[1:a]atrim=0:${totalDur.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(3)}:d=1.5,volume=0.65[a]`,
                 '-map', '0:v', '-map', '[a]',
-                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest',
+                // -shortest は省略: totalDur を正確に計算済みなので映像/音声の長さが一致する
+                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
                 '-movflags', '+faststart',
                 outputPath,
-            ], 60000);
+            ], 90000);
         }
         catch (e) {
             console.warn('[ffmpeg] BGM failed, using video-only:', e.message);
@@ -540,7 +657,40 @@ export const renderWithFFmpeg = async (payload, jobId, onProgress, preview = fal
     else {
         await fs.copyFile(concatPath, outputPath);
     }
-    // ── 4. Cleanup ────────────────────────────────────────────────────────────
+    // ── 4. Logo overlay ───────────────────────────────────────────────────────
+    if (logoUrl && !preview) {
+        const logoPath = `${TMP}/${jobId}_logo.png`;
+        const logoOutput = `${TMP}/${jobId}_logo_out.mp4`;
+        try {
+            await downloadFile(logoUrl, logoPath);
+            const logoW = Math.round(w * 0.18); // 動画幅の18%
+            const pad = Math.round(w * 0.03); // 右下の余白
+            console.log('[ffmpeg] adding logo overlay…');
+            await runFFmpeg(ffmpeg, [
+                '-y', '-loglevel', 'error',
+                '-i', outputPath,
+                '-i', logoPath,
+                '-filter_complex',
+                `[1:v]scale=${logoW}:-1:flags=lanczos,format=rgba[logo];` +
+                    `[0:v][logo]overlay=x=W-w-${pad}:y=H-h-${pad}:format=auto[vout]`,
+                '-map', '[vout]', '-map', '0:a?', // 0:a? = 音声なしでもエラーにしない
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                logoOutput,
+            ], 120000);
+            await fs.unlink(outputPath).catch(() => { });
+            await fs.rename(logoOutput, outputPath);
+            console.log('[ffmpeg] logo overlay done');
+        }
+        catch (e) {
+            console.warn('[ffmpeg] logo overlay failed, skipping:', e.message);
+            await fs.unlink(logoPath).catch(() => { });
+            await fs.unlink(logoOutput).catch(() => { });
+        }
+        await fs.unlink(logoPath).catch(() => { });
+    }
+    // ── 5. Cleanup ────────────────────────────────────────────────────────────
     const toDelete = [
         ...clipPaths,
         ...(concatPath !== clipPaths[0] ? [concatPath] : []),

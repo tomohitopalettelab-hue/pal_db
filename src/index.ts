@@ -41,6 +41,16 @@ import {
   upsertServiceSubscription,
   verifyChatLogin,
 } from './store.js';
+import {
+  ensureCrmTables,
+  listCrmProducts, getCrmProduct, upsertCrmProduct, deleteCrmProduct,
+  listCrmCustomers, getCrmCustomer, upsertCrmCustomer, deleteCrmCustomer,
+  listCrmLeads, getCrmLead, upsertCrmLead, deleteCrmLead,
+  listCrmSales, createCrmSale, deleteCrmSale,
+  listCrmContracts, getCrmContract, upsertCrmContract, deleteCrmContract,
+  createCrmEmailLog, listCrmEmailLogs,
+  getCrmDashboard,
+} from './crm-store.js';
 
 dotenv.config();
 
@@ -2476,9 +2486,373 @@ app.delete('/api/pal-opt-posts/:id', async (req: Request, res: Response) => {
   }
 });
 
+/* ================================================================== */
+/*  CRM API Routes (/api/crm/*)                                       */
+/* ================================================================== */
+
+// Dashboard
+app.get('/api/crm/dashboard', async (_req: Request, res: Response) => {
+  try {
+    const data = await getCrmDashboard();
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to get dashboard' });
+  }
+});
+
+// Products
+app.get('/api/crm/products', async (_req: Request, res: Response) => {
+  try {
+    const products = await listCrmProducts();
+    return res.json({ success: true, data: products });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to list products' });
+  }
+});
+
+app.get('/api/crm/products/:id', async (req: Request, res: Response) => {
+  try {
+    const product = await getCrmProduct(req.params.id);
+    if (!product) return res.status(404).json({ success: false, error: 'not found' });
+    return res.json({ success: true, data: product });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to get product' });
+  }
+});
+
+app.post('/api/crm/products', async (req: Request, res: Response) => {
+  try {
+    const product = await upsertCrmProduct(req.body);
+    return res.json({ success: true, data: product });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to save product' });
+  }
+});
+
+app.put('/api/crm/products/:id', async (req: Request, res: Response) => {
+  try {
+    const product = await upsertCrmProduct({ ...req.body, id: req.params.id });
+    return res.json({ success: true, data: product });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to update product' });
+  }
+});
+
+app.delete('/api/crm/products/:id', async (req: Request, res: Response) => {
+  try {
+    await deleteCrmProduct(req.params.id);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to delete product' });
+  }
+});
+
+// Customers
+app.get('/api/crm/customers', async (_req: Request, res: Response) => {
+  try {
+    const customers = await listCrmCustomers();
+    return res.json({ success: true, data: customers });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to list customers' });
+  }
+});
+
+app.get('/api/crm/customers/:id', async (req: Request, res: Response) => {
+  try {
+    const customer = await getCrmCustomer(req.params.id);
+    if (!customer) return res.status(404).json({ success: false, error: 'not found' });
+    return res.json({ success: true, data: customer });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to get customer' });
+  }
+});
+
+app.post('/api/crm/customers', async (req: Request, res: Response) => {
+  try {
+    const customer = await upsertCrmCustomer(req.body);
+    return res.json({ success: true, data: customer });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to save customer' });
+  }
+});
+
+app.put('/api/crm/customers/:id', async (req: Request, res: Response) => {
+  try {
+    const customer = await upsertCrmCustomer({ ...req.body, id: req.params.id });
+    return res.json({ success: true, data: customer });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to update customer' });
+  }
+});
+
+app.delete('/api/crm/customers/:id', async (req: Request, res: Response) => {
+  try {
+    await deleteCrmCustomer(req.params.id);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to delete customer' });
+  }
+});
+
+// ─── Agency (代理店) ──────────────────────────────────────────────
+// 代理店 = 「他の crm_customers から agency_id で参照されている crm_customers」
+// 自身の login_id / login_password で認証（chat-auth 経由）
+
+app.post('/api/crm/agency-login', async (req: Request, res: Response) => {
+  try {
+    const loginId = String(req.body?.loginId || '').trim();
+    const password = String(req.body?.password || '');
+    if (!loginId || !password) {
+      return res.status(400).json({ success: false, error: 'loginId/password required' });
+    }
+
+    // 1. パスワード照合（chat-auth と同一基盤）
+    const auth = await verifyChatLogin(loginId, password);
+    if (!auth.success) {
+      return res.status(401).json({ success: false, error: 'invalid credentials' });
+    }
+
+    // 2. 代理店であることを確認（他顧客から agency_id 参照されているか）
+    const { sql } = await import('@vercel/postgres');
+    const agencyRows = await sql`
+      SELECT c.id, c.company_name, c.login_id
+      FROM crm_customers c
+      WHERE c.login_id = ${loginId}
+        AND EXISTS (SELECT 1 FROM crm_customers c2 WHERE c2.agency_id = c.id)
+      LIMIT 1
+    `;
+    const agency = agencyRows.rows[0];
+    if (!agency) {
+      return res.status(403).json({ success: false, error: 'not an agency' });
+    }
+    const agencyId = String(agency.id);
+
+    // 3. 担当顧客の paletteId を取得（crm_customers.login_id ↔ accounts.chat_login_id 経由）
+    const pidRows = await sql`
+      SELECT DISTINCT a.palette_id
+      FROM crm_customers c
+      JOIN accounts a ON a.chat_login_id = c.login_id
+      WHERE c.agency_id = ${agencyId}
+        AND a.palette_id IS NOT NULL
+        AND a.palette_id <> ''
+    `;
+    const paletteIds = pidRows.rows
+      .map((r) => String((r as { palette_id?: string | null }).palette_id || '').toUpperCase())
+      .filter((id: string) => /^[A-Z][0-9]{4}$/.test(id));
+
+    return res.json({
+      success: true,
+      agencyId,
+      agencyName: String(agency.company_name ?? '代理店'),
+      loginId: String(agency.login_id ?? ''),
+      paletteIds,
+    });
+  } catch (error) {
+    console.error('agency-login error:', error);
+    return res.status(500).json({ success: false, error: 'failed to login' });
+  }
+});
+
+app.get('/api/crm/agencies/:agencyId/palette-ids', async (req: Request, res: Response) => {
+  try {
+    const agencyId = String(req.params.agencyId || '').trim();
+    if (!agencyId) {
+      return res.status(400).json({ success: false, error: 'agencyId required' });
+    }
+    const { sql } = await import('@vercel/postgres');
+    const result = await sql`
+      SELECT DISTINCT a.palette_id
+      FROM crm_customers c
+      JOIN accounts a ON a.chat_login_id = c.login_id
+      WHERE c.agency_id = ${agencyId}
+        AND a.palette_id IS NOT NULL
+        AND a.palette_id <> ''
+    `;
+    const paletteIds = result.rows
+      .map((r) => String((r as { palette_id?: string | null }).palette_id || '').toUpperCase())
+      .filter((id: string) => /^[A-Z][0-9]{4}$/.test(id));
+    return res.json({ success: true, agencyId, paletteIds });
+  } catch (error) {
+    console.error('agency palette-ids error:', error);
+    return res.status(500).json({ success: false, error: 'failed to list palette-ids' });
+  }
+});
+
+// Leads
+app.get('/api/crm/leads', async (_req: Request, res: Response) => {
+  try {
+    const leads = await listCrmLeads();
+    return res.json({ success: true, data: leads });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to list leads' });
+  }
+});
+
+app.get('/api/crm/leads/:id', async (req: Request, res: Response) => {
+  try {
+    const lead = await getCrmLead(req.params.id);
+    if (!lead) return res.status(404).json({ success: false, error: 'not found' });
+    return res.json({ success: true, data: lead });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to get lead' });
+  }
+});
+
+app.post('/api/crm/leads', async (req: Request, res: Response) => {
+  try {
+    const lead = await upsertCrmLead(req.body);
+    return res.json({ success: true, data: lead });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to save lead' });
+  }
+});
+
+app.put('/api/crm/leads/:id', async (req: Request, res: Response) => {
+  try {
+    const lead = await upsertCrmLead({ ...req.body, id: req.params.id });
+    return res.json({ success: true, data: lead });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to update lead' });
+  }
+});
+
+app.delete('/api/crm/leads/:id', async (req: Request, res: Response) => {
+  try {
+    await deleteCrmLead(req.params.id);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to delete lead' });
+  }
+});
+
+// Bulk Email (mock)
+app.post('/api/crm/leads/bulk-email', async (req: Request, res: Response) => {
+  try {
+    const { leadIds, subject, body } = req.body;
+    if (!leadIds?.length || !subject || !body) {
+      return res.status(400).json({ success: false, error: 'leadIds, subject, body are required' });
+    }
+    const log = await createCrmEmailLog({ leadIds, subject, body });
+    return res.json({ success: true, data: log, message: '[MOCK] メール送信をシミュレートしました' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to send bulk email' });
+  }
+});
+
+app.get('/api/crm/email-logs', async (_req: Request, res: Response) => {
+  try {
+    const logs = await listCrmEmailLogs();
+    return res.json({ success: true, data: logs });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to list email logs' });
+  }
+});
+
+// Sales
+app.get('/api/crm/sales', async (_req: Request, res: Response) => {
+  try {
+    const sales = await listCrmSales();
+    return res.json({ success: true, data: sales });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to list sales' });
+  }
+});
+
+app.post('/api/crm/sales', async (req: Request, res: Response) => {
+  try {
+    const sale = await createCrmSale(req.body);
+    return res.json({ success: true, data: sale });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to create sale' });
+  }
+});
+
+app.delete('/api/crm/sales/:id', async (req: Request, res: Response) => {
+  try {
+    await deleteCrmSale(req.params.id);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to delete sale' });
+  }
+});
+
+// Contracts
+app.get('/api/crm/contracts', async (_req: Request, res: Response) => {
+  try {
+    const contracts = await listCrmContracts();
+    return res.json({ success: true, data: contracts });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to list contracts' });
+  }
+});
+
+app.get('/api/crm/contracts/:id', async (req: Request, res: Response) => {
+  try {
+    const contract = await getCrmContract(req.params.id);
+    if (!contract) return res.status(404).json({ success: false, error: 'not found' });
+    return res.json({ success: true, data: contract });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to get contract' });
+  }
+});
+
+app.post('/api/crm/contracts', async (req: Request, res: Response) => {
+  try {
+    const contract = await upsertCrmContract(req.body);
+    return res.json({ success: true, data: contract });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to save contract' });
+  }
+});
+
+app.put('/api/crm/contracts/:id', async (req: Request, res: Response) => {
+  try {
+    const contract = await upsertCrmContract({ ...req.body, id: req.params.id });
+    return res.json({ success: true, data: contract });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to update contract' });
+  }
+});
+
+app.delete('/api/crm/contracts/:id', async (req: Request, res: Response) => {
+  try {
+    await deleteCrmContract(req.params.id);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'failed to delete contract' });
+  }
+});
+
 app.listen(port, async () => {
   try {
     await ensureTables();
+    await ensureCrmTables();
     // サーバー再起動時: 前回レンダリング中だったジョブを draft に戻す
     // （エラーにせず再レンダリング可能な状態にする）
     try {

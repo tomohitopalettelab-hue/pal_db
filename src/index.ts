@@ -8,7 +8,8 @@ import { existsSync, mkdirSync, createReadStream } from 'fs';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 import { renderWithFFmpeg, DATA_DIR } from './ffmpeg-renderer.js';
-import { startScheduler } from './pal-opt-scheduler.js';
+// pal_opt完全リセット(2026-07)に伴いscheduler停止。復活させないこと
+// import { startScheduler } from './pal-opt-scheduler.js';
 import {
   deleteAccountStatusOption,
   deleteAccount,
@@ -2871,7 +2872,8 @@ app.listen(port, async () => {
     } catch (e) {
       console.warn('[pal-db] startup cleanup warning:', e);
     }
-    startScheduler();
+    // pal_opt(SNS自動投稿)は2026-07にAIOサービスへ完全リセットのためscheduler停止
+    // startScheduler();
     console.log(`[pal-db] running on http://localhost:${port}`);
   } catch (error) {
     console.error('[pal-db] init error', error);
